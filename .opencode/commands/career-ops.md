@@ -10,5 +10,7 @@ $ARGUMENTS
 Load the career-ops skill:
 
 ```javascript
-skill({ name: "career-ops" })
+skill({ id: "career-ops" })
 ```
+
+The skill id is the path-derived one (`career-ops`, from `.opencode/skills/career-ops/SKILL.md`); OpenCode selects skills by ID, and the ID is case-sensitive.

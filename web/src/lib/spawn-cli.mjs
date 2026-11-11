@@ -39,6 +39,11 @@ import { prepareCliLaunch } from "./cli-launch.mjs";
  * tools, so there is nothing to fence — and it cannot import this module anyway
  * without making the two a cycle.
  *
+ * A fencer may also contribute ENVIRONMENT variables, not only argv: one
+ * runtime's permission mechanism has no flag. OpenCode's rules are a config
+ * document that its SERVER reads, so the variables that carry the document
+ * have to reach the server this process starts.
+ *
  * @param {string} binPath
  * @param {string[]} args
  * @param {import("node:child_process").SpawnOptionsWithoutStdio} options
@@ -57,7 +62,7 @@ export function spawnHeadlessCli(binPath, args, options, fencing) {
         "Declare what the worker needs (worker-capabilities.mjs) so its permissions can be applied.",
     );
   }
-  const { args: fencedArgs } = fenceArgs({ ...fencing, args });
+  const { args: fencedArgs, env: fencedEnv } = fenceArgs({ ...fencing, args });
   // On Windows an npm-installed CLI is a script shim spawn() cannot run without a
   // shell, so launch the .js/.exe it wraps (a no-op elsewhere; cli-launch.mjs).
   // After fencing, so the fencers see the CLI's own argv rather than node's.
@@ -68,7 +73,17 @@ export function spawnHeadlessCli(binPath, args, options, fencing) {
   // output at all; the same spawn with windowsHide (CREATE_NO_WINDOW) succeeds.
   // Nothing spawned here needs a console, so never inherit one. Set after the
   // caller's options so no caller can opt back in. No-op on POSIX (#3809).
-  const child = spawn(launch.command, launch.args, { ...options, windowsHide: true });
+  //
+  // The fencer's environment rides along here because one runtime's permission
+  // mechanism has no flag: OpenCode's rules are a config document its SERVER
+  // reads, and only a server this process starts inherits this environment
+  // (cli-fencing.mjs). The caller's own variables are kept, and the fence wins
+  // on a name both set — a permission document is not something a caller may
+  // weaken by accident.
+  const env = fencedEnv
+    ? { ...(options.env ?? process.env), ...fencedEnv }
+    : options.env;
+  const child = spawn(launch.command, launch.args, { ...options, windowsHide: true, env });
   child.stdin?.end();
   return child;
 }

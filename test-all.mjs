@@ -14093,7 +14093,15 @@ try {
   // the git check skips itself when git cannot be run.
   const emptyClaudeCfg = mkdtempSync(join(tmpdir(), 'co-emptycfg-'));
   const emptyDoctorPath = mkdtempSync(join(tmpdir(), 'co-empty-path-'));
-  const doctorEnv = { env: { ...process.env, CLAUDE_CONFIG_DIR: emptyClaudeCfg, PATH: emptyDoctorPath } };
+  // OPENCODE is pinned off for the same reason PATH is: doctor reads the
+  // runtime marker OPENCODE=1 and, when it is set, resolves the active CLI to
+  // opencode — so it scans opencode.json for the Playwright MCP server and
+  // reports "not detected" for a fixture that configures it the Claude way.
+  // OpenCode stamps that marker on every process it runs, so a developer whose
+  // suite runs from inside OpenCode got a different result from a developer
+  // whose suite runs from a plain shell. Empty is not '1', which is the same
+  // opt-out a user gets from OPENCODE=0.
+  const doctorEnv = { env: { ...process.env, OPENCODE: '', CLAUDE_CONFIG_DIR: emptyClaudeCfg, PATH: emptyDoctorPath } };
 
   // No project MCP config → doctor surfaces a (non-fatal) warning instead of
   // letting SPA job boards fail silently. doctor reads project MCP config from

@@ -318,6 +318,108 @@ export const CODEX_REQUIRED_EXEC_FLAGS = Object.freeze([
 ]);
 
 /**
+ * OpenCode's permission rules, in OpenCode's own vocabulary.
+ *
+ * OpenCode has no per-tool flags: permission is a config document whose rules
+ * are ORDERED — "the last matching rule wins"
+ * (https://opencode.ai/docs/permissions). So the translation is deny-first and
+ * allow-after: one broad deny, then the actions the capability record needs.
+ *
+ * The action names are OpenCode's (https://opencode.ai/docs/permissions#actions):
+ * read, edit, glob, grep, shell, webfetch, websearch. Everything else stays
+ * denied by the broad rule, including the actions with no Claude counterpart —
+ * `execute` (Code Mode, which reaches other tools through one call), `question`,
+ * `skill`, `subagent`, `todowrite`, the image tool — and the MCP actions
+ * (`<server>_<tool>`), whose names depend on servers this process cannot know
+ * in advance. Claude's non-writing workers get `--strict-mcp-config` for the
+ * same reason; a writing worker loses its MCP tools here, which is stricter
+ * than Claude, never weaker.
+ *
+ * The granted set mirrors Claude's scopes (claude-invocation.mjs): a read-only
+ * worker reads local files, a fetching worker also reaches the web, a writing
+ * worker also edits and runs shell commands. `external_directory` is granted
+ * because OpenCode checks a path outside the project under that action BEFORE
+ * `read`, and Claude's Read is not path-restricted — without it the same
+ * worker could read a file on Claude and not on OpenCode.
+ *
+ * @param {import("./worker-capabilities.mjs").Capabilities} capabilities
+ * @returns {{action: string, resource: string, effect: string}[]}
+ */
+export function openCodePermissions({ writes, network }) {
+  const rules = [{ action: "*", resource: "*", effect: "deny" }];
+  const allow = (action) => rules.push({ action, resource: "*", effect: "allow" });
+  allow("read");
+  allow("glob");
+  allow("grep");
+  allow("external_directory");
+  if (network) {
+    allow("webfetch");
+    allow("websearch");
+  }
+  if (writes) {
+    allow("edit");
+    allow("shell");
+  }
+  return rules;
+}
+
+/**
+ * OpenCode's argv, with the flag that makes the fence reachable.
+ *
+ * `OPENCODE_CONFIG_CONTENT` is read by the OpenCode SERVER, not by the client:
+ * the server owns configuration, and the rules it loads are appended to the
+ * list every agent then enforces (verified on opencode v2.2.7 — the document's
+ * `permission: "deny"` arrives as the rule {action:"*", resource:"*",
+ * effect:"deny"}, and it lands after the base allow policy, so it wins).
+ *
+ * A client-side environment variable therefore does NOT reach a server that is
+ * already running: `opencode run` attaches to the shared background server,
+ * whose environment is not this process's, and the rules never arrive
+ * (verified — with the variable set, the model's bash tool still ran and wrote
+ * its file). `--standalone` gives the run a private server, which inherits this
+ * process's environment, so the rules arrive.
+ *
+ * The rules reach the agent's list when that server finishes loading its
+ * configuration — measured at ~5s into a private server's life — and every
+ * tool asks permission at call time, so the window that matters is between
+ * those two moments. A worker's first tool call comes after its first model
+ * turn, which is later than the load on every run measured here.
+ *
+ * @param {string[]} args
+ * @returns {string[]}
+ */
+function openCodeArgs(args) {
+  const run = args.indexOf("run");
+  if (run === -1) {
+    throw new Error(
+      `cli-fencing: opencode argv must contain a "run" subcommand, got ${JSON.stringify(args)}. ` +
+        "The permission rules travel in the environment of the server that runs the prompt, " +
+        "and only a server this process starts reads that environment.",
+    );
+  }
+  if (args.includes("--standalone")) return args;
+  return [...args.slice(0, run + 1), "--standalone", ...args.slice(run + 1)];
+}
+
+/**
+ * OpenCode's fencing mechanism: a config document the OpenCode server reads.
+ *
+ * Returns environment variables as well as argv, because OpenCode's permission
+ * block has no flag: it is a document. The document is delivered through
+ * `OPENCODE_CONFIG_CONTENT`, which the server merges into its configuration.
+ *
+ * @param {string[]} args
+ * @param {import("./worker-capabilities.mjs").Capabilities} capabilities
+ * @returns {{args: string[], env: Record<string, string>}}
+ */
+function fenceOpenCode(args, capabilities) {
+  return {
+    args: openCodeArgs(args),
+    env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permissions: openCodePermissions(capabilities) }) },
+  };
+}
+
+/**
  * Per-CLI fencing. The single table: a CLI is fenceable iff it appears here.
  *
  * The runtimes absent from this table are absent because nobody has verified a
@@ -327,16 +429,20 @@ export const CODEX_REQUIRED_EXEC_FLAGS = Object.freeze([
  * unfenced. #2507 records the leads for whoever picks this up: gemini and qwen
  * appear to expose
  * `--approval-mode` plus a container `--sandbox` (needs Docker/Podman), copilot
- * `--allow-tool`/`--deny-tool`, opencode a config-file `permission` block, and
- * antigravity has no public documentation found. Each needs probing on a box that
- * has it — the issue is explicit that an unverifiable claim must warn rather than
- * assert enforcement.
+ * `--allow-tool`/`--deny-tool`, and antigravity has no public documentation
+ * found. Each needs probing on a box that has it — the issue is explicit that an
+ * unverifiable claim must warn rather than assert enforcement.
  *
- * @type {Record<string, (args: string[], capabilities: import("./worker-capabilities.mjs").Capabilities) => string[]>}
+ * A fencer returns the argv to run and, when the runtime's mechanism needs
+ * the ENVIRONMENT rather than the command line (OpenCode's permission
+ * document), the variables that carry it.
+ *
+ * @type {Record<string, (args: string[], capabilities: import("./worker-capabilities.mjs").Capabilities) => {args: string[], env?: Record<string, string>}>}
  */
 const FENCERS = Object.freeze({
-  claude: verifyClaudeArgs,
-  codex: fenceCodexArgs,
+  claude: (args, capabilities) => ({ args: verifyClaudeArgs(args, capabilities) }),
+  codex: (args, capabilities) => ({ args: fenceCodexArgs(args, capabilities) }),
+  opencode: fenceOpenCode,
 });
 
 /**
@@ -381,6 +487,13 @@ export function fencingReport({ cliId, cliName, capabilities }) {
         "only allows alongside write access — its writes are confined to the project folder, not blocked",
     };
   }
+  // Claude and OpenCode are full: each expresses BOTH axes in its own
+  // vocabulary, and each is checked before the run. Claude refuses an argv that
+  // does not deny what the record forbids; OpenCode's rules are per action, so
+  // a worker that must not write is denied `edit` and `shell`, one that must
+  // not fetch is denied `webfetch` and `websearch`, and everything without a
+  // Claude counterpart (`execute`, `question`, `skill`, subagents, MCP tools)
+  // stays denied.
   return { level: "full", notice: null };
 }
 
@@ -404,16 +517,18 @@ export function isFencingNotice(label) {
 }
 
 /**
- * Apply this CLI's permission mechanism to an argv.
+ * Apply this CLI's permission mechanism to an invocation.
  *
- * A fenceable CLI's entry either rewrites the argv (codex: sandbox flags) or
+ * A fenceable CLI's entry either rewrites the argv (codex: sandbox flags),
  * verifies it (claude: its restriction is already in the flags the caller
- * spelled). Anything absent from FENCERS is passed through untouched — we have no
- * verified mechanism for those runtimes, and inventing one would be worse than
- * reporting the gap, which fencingReport does.
+ * spelled), or delivers a permission document through the environment
+ * (opencode: a config document the OpenCode server reads). Anything absent
+ * from FENCERS is passed through untouched — we have no verified mechanism
+ * for those runtimes, and inventing one would be worse than reporting the
+ * gap, which fencingReport does.
  *
  * @param {{cliId: string, args: string[], capabilities: import("./worker-capabilities.mjs").Capabilities}} invocation
- * @returns {{args: string[]}}
+ * @returns {{args: string[], env?: Record<string, string>}}
  */
 export function fenceArgs({ cliId, args, capabilities }) {
   // Object.hasOwn, exactly as fencingReport does. A bare `FENCERS[cliId]` also
@@ -424,5 +539,6 @@ export function fenceArgs({ cliId, args, capabilities }) {
   // claim is that membership in FENCERS is the whole answer, so both entry
   // points have to agree on what membership means.
   if (!Object.hasOwn(FENCERS, cliId)) return { args };
-  return { args: FENCERS[cliId](args, capabilities) };
+  const { args: fencedArgs, env } = FENCERS[cliId](args, capabilities);
+  return env ? { args: fencedArgs, env } : { args: fencedArgs };
 }

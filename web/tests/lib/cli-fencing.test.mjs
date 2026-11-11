@@ -341,7 +341,7 @@ test("claude is fenced by its own tool flags, so its argv passes through", () =>
 
 test("a CLI with no verified mechanism is passed through and reported honestly", () => {
   // Given the runtimes nobody has been able to verify a fencing mechanism for
-  for (const cliId of ["gemini", "opencode", "copilot", "qwen", "antigravity", "grok"]) {
+  for (const cliId of ["gemini", "copilot", "qwen", "antigravity", "grok"]) {
     const original = ["-p", "PROMPT"];
     const { args } = fenceArgs({ cliId, args: original, capabilities: CAPS.workspaceWrite });
 
@@ -352,6 +352,76 @@ test("a CLI with no verified mechanism is passed through and reported honestly",
     const { level, notice } = fencingReport({ cliId, cliName: cliId, capabilities: CAPS.workspaceWrite });
     assert.equal(level, "none", `${cliId} has no verified mechanism and must not claim one`);
     assert.ok(isFencingNotice(notice), `${cliId} must produce a detectable notice`);
+  }
+});
+
+test("opencode is fenced by a permission document, not by a flag", () => {
+  // Given OpenCode, whose permission mechanism is a config document its own
+  // server reads — there is no flag for it (opencode.ai/docs/permissions)
+  const original = ["run", "PROMPT"];
+  const { args, env } = fenceArgs({ cliId: "opencode", args: original, capabilities: CAPS.localReadOnly });
+
+  // Then the rules travel in the environment, and the run gets a server that
+  // reads THIS process's environment: a run attached to an already-running
+  // shared server would never see them.
+  assert.ok(env?.OPENCODE_CONFIG_CONTENT, "the permission document must travel in the environment");
+  assert.ok(args.includes("--standalone"), "the run must own the server that reads the document");
+  assert.equal(args.at(-1), "PROMPT", "the prompt stays last");
+  // And the caller's array is not mutated underneath it.
+  assert.deepEqual(original, ["run", "PROMPT"]);
+});
+
+test("an opencode fence denies what the record forbids and grants what it needs", () => {
+  // Given the rules OpenCode's server merges into every agent's list, where the
+  // LAST matching rule wins (opencode.ai/docs/permissions)
+  const rules = (caps) => JSON.parse(
+    fenceArgs({ cliId: "opencode", args: ["run", "P"], capabilities: caps }).env.OPENCODE_CONFIG_CONTENT,
+  ).permissions;
+
+  // Then the first rule denies everything, so an action nobody granted cannot
+  // slip through, and the granted actions follow it.
+  const readOnly = rules(CAPS.localReadOnly);
+  assert.deepEqual(readOnly[0], { action: "*", resource: "*", effect: "deny" });
+  assert.ok(readOnly.some((r) => r.action === "read" && r.effect === "allow"), "a local worker must be able to read");
+  assert.ok(!readOnly.some((r) => r.action === "edit" && r.effect === "allow"), "a local worker must not edit");
+  assert.ok(!readOnly.some((r) => r.action === "shell" && r.effect === "allow"), "a local worker must not run a command");
+  assert.ok(!readOnly.some((r) => r.action === "webfetch" && r.effect === "allow"), "a local worker must not fetch");
+
+  // A fetching worker reaches the web and still cannot write.
+  const fetching = rules(CAPS.networkReadOnly);
+  assert.ok(fetching.some((r) => r.action === "webfetch" && r.effect === "allow"), "a fetching worker must fetch");
+  assert.ok(!fetching.some((r) => r.action === "edit" && r.effect === "allow"), "a fetching worker must not edit");
+  assert.ok(!fetching.some((r) => r.action === "shell" && r.effect === "allow"), "a fetching worker must not run a command");
+
+  // A writing worker edits and runs commands.
+  const writing = rules(CAPS.workspaceWrite);
+  assert.ok(writing.some((r) => r.action === "edit" && r.effect === "allow"), "a writing worker must edit");
+  assert.ok(writing.some((r) => r.action === "shell" && r.effect === "allow"), "a writing worker must run commands");
+});
+
+test("an opencode argv with no run subcommand is refused instead of guessed", () => {
+  // Given an argv the fencer cannot place the permission delivery in
+  for (const args of [["-p", "PROMPT"], ["PROMPT"]]) {
+    // When fencing is attempted
+    // Then it fails loudly. A guess here would produce a run that looks fenced
+    // while the rules never arrive — the exact dishonesty fencingReport exists
+    // to prevent.
+    assert.throws(
+      () => fenceArgs({ cliId: "opencode", args, capabilities: CAPS.localReadOnly }),
+      /must contain a "run" subcommand/,
+      `${args.join(" ")} must be refused`,
+    );
+  }
+});
+
+test("opencode reports a fenced run honestly", () => {
+  // Given the fence covers both axes for every capability record
+  for (const [name, caps] of Object.entries(CAPS)) {
+    const { level, notice } = fencingReport({ cliId: "opencode", cliName: "OpenCode", capabilities: caps });
+
+    // Then the run says it is fenced, and says nothing it cannot back.
+    assert.equal(level, "full", `${name} must be fenced`);
+    assert.equal(notice, null, `${name} must not carry a notice it cannot justify`);
   }
 });
 
@@ -521,12 +591,12 @@ test("each notice is detectable by the UI and names the runtime", () => {
 
 test("fencingReport answers for the runtimes the routes actually ask about", () => {
   // Given the routes call it for every entry in clis.ts
-  for (const cliId of ["gemini", "opencode", "copilot", "qwen", "antigravity", "grok"]) {
+  for (const cliId of ["gemini", "copilot", "qwen", "antigravity", "grok"]) {
     // Then each unverified runtime reports honestly rather than defaulting to a
     // reassuring answer.
     assert.equal(fencingReport({ cliId, cliName: cliId, capabilities: CAPS.localReadOnly }).level, "none");
   }
-  for (const cliId of ["claude", "codex"]) {
+  for (const cliId of ["claude", "codex", "opencode"]) {
     assert.equal(fencingReport({ cliId, cliName: cliId, capabilities: CAPS.localReadOnly }).level, "full");
   }
 });

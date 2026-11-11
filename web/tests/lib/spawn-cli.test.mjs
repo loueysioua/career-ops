@@ -115,6 +115,38 @@ test("spawnHeadlessCli refuses to spawn without a fencing declaration", () => {
   assert.throws(() => spawnHeadlessCli(...spawnArgs, { capabilities: CAPS.localReadOnly }), /without \{cliId, capabilities\}/);
 });
 
+test("spawnHeadlessCli hands the fence's environment to the child", () => {
+  // Given a runtime whose permission mechanism has no flag — OpenCode's rules
+  // are a config document its own server reads, so the document travels in the
+  // environment of the server this process starts
+  const realSpawn = childProcess.spawn;
+  const calls = [];
+  childProcess.spawn = (command, args, options) => {
+    calls.push({ command, args, options });
+    return { stdin: { end() {} } };
+  };
+  syncBuiltinESMExports();
+  try {
+    spawnHeadlessCli(process.execPath, ["run", "P"], { cwd: process.cwd(), env: process.env }, {
+      cliId: "opencode",
+      capabilities: CAPS.localReadOnly,
+    });
+  } finally {
+    childProcess.spawn = realSpawn;
+    syncBuiltinESMExports();
+  }
+
+  // Then the child is started with the permission document in its environment,
+  // and with a server that will read it.
+  assert.equal(calls.length, 1);
+  const { args, options } = calls[0];
+  assert.ok(args.includes("--standalone"), "the run must own the server that reads the document");
+  const content = JSON.parse(options.env.OPENCODE_CONFIG_CONTENT);
+  assert.deepEqual(content.permissions[0], { action: "*", resource: "*", effect: "deny" });
+  // And the caller's own environment survives: the fence adds, it does not replace.
+  assert.equal(options.env.PATH, process.env.PATH);
+});
+
 test("spawnHeadlessCli never lets a child inherit the server's console (windowsHide)", () => {
   // Given: on Windows a child attaches to the parent's console, and a long-lived
   // dev server whose console has gone stale makes EVERY such child die at DLL

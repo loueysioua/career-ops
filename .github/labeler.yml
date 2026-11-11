@@ -17,6 +17,7 @@
           - .agents/skills/**
           - .claude/skills/**
           - .opencode/skills/**
+          - .opencode/commands/**
           - .qwen/skills/**
           - .antigravitycli/skills/**
           - .grok/skills/**

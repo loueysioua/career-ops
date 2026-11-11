@@ -100,6 +100,14 @@ AI-powered, CLI-agnostic job search automation: pipeline tracking, offer evaluat
 - **Headless:** `codex exec "prompt"` for one-shot workers.
 - **Examples:** `Run career-ops scan mode`, `Run career-ops pipeline mode for data/pipeline.md`, `Run career-ops pdf mode`, `Run career-ops tracker mode`, `Evaluate this JD with career-ops auto-pipeline: https://company.com/jobs/123`
 
+### OpenCode invocation
+
+- **Interactive:** run `opencode` in the repo root. `OPENCODE.md` imports `AGENTS.md`, so the root contract loads as project context. The slash command is `/career-ops` (`.opencode/commands/career-ops.md`), which loads the shared router skill by its **ID** — `career-ops`, derived from the path `.opencode/skills/career-ops/SKILL.md`, not from the frontmatter `name`. OpenCode's skill tool takes `{"id": "..."}`; passing `name` does not load the skill.
+- **Headless:** `opencode run "prompt"` for one-shot workers. When the `opencode` binary is not on PATH, `ollama launch opencode -y -- run "prompt"` starts it.
+- **Model:** `opencode run` needs a model configured in `opencode.json` (or the user's global config). Without one the run has no model to talk to.
+- **Detection:** OpenCode stamps `OPENCODE=1` on the processes it runs, so `doctor.mjs` detects the CLI on its own; `node doctor.mjs --cli opencode` forces it.
+- **Docs:** `docs/OPENCODE.md` — setup, `opencode.json` (MCP, skills, permissions), headless use, troubleshooting.
+
 ### Pi invocation
 
 - **Project context:** `pi` reads `AGENTS.md` from the repo root automatically; there is no wrapper file to keep in sync.

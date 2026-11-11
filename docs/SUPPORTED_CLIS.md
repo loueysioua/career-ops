@@ -7,7 +7,7 @@ Career-ops is AI-agnostic and runs on several command-line agent tools. The core
 | Claude Code | `CLAUDE.md` | Interactive: `claude` (then `/career-ops`). Headless/Batch: `claude -p "prompt"`. From any folder: install the plugin ([CLAUDE_PLUGIN.md](CLAUDE_PLUGIN.md)) |
 | Cursor | `AGENTS.md` | Interactive: open the project in Cursor and ask for `career-ops` (auto-discovered from `.agents/skills/career-ops/SKILL.md`) |
 | Codex | `CODEX.md` (see [`docs/CODEX.md`](CODEX.md)) | Interactive: `codex` (then use plain text). Headless/Batch: `codex exec "prompt"` |
-| OpenCode | `OPENCODE.md` | Interactive: `opencode` (then `/career-ops`). Headless/Batch: `opencode run "prompt"` |
+| OpenCode | `OPENCODE.md` (see [`docs/OPENCODE.md`](OPENCODE.md)) | Interactive: `opencode` (then `/career-ops`). Headless/Batch: `opencode run "prompt"` |
 | Pi | `AGENTS.md` | Interactive: `pi` (then `/skill:career-ops`). Headless/Batch: `pi -a -p "prompt"` |
 | Antigravity CLI | `AGENTS.md` | Interactive: `agy` (then `/career-ops`). Headless/Batch: `agy -p "prompt"` |
 | Grok Build CLI | `AGENTS.md` | Interactive: `grok` (then `/career-ops`). Headless/Batch: `grok -p "prompt"` (add `--yolo` to auto-approve tool executions) |
@@ -21,6 +21,18 @@ Career-ops is AI-agnostic and runs on several command-line agent tools. The core
 ## Hermes Agent
 
 Hermes runs the same pipeline as every other CLI here. Trust the checkout once with `hermes skills trust` before interactive use. The web UI uses Hermes's one-shot mode (`hermes chat -q ... --oneshot -Q --no-restore-cwd`) only for explicitly non-writing workers; evaluation and portal-repair workers reject it because no verified Hermes permission adapter exists. Batch ranking does not support Hermes. Hermes project-context scanning still applies; see [`docs/HERMES.md`](HERMES.md) for its rules and limitations.
+
+## OpenCode
+
+OpenCode reads `AGENTS.md` as project context through `OPENCODE.md`, and finds the shared router at `.opencode/skills/career-ops/SKILL.md`. The slash command `/career-ops` loads it **by its path-derived ID** — `career-ops` — because OpenCode's `skill` tool takes `{"id": "..."}`; `name` is Claude Code's parameter and does not select a skill here.
+
+```bash
+cd career-ops
+opencode                                       # interactive, then /career-ops
+opencode run "Evaluate this JD: https://company.com/jobs/123"   # headless
+```
+
+`opencode run` needs a model configured in `opencode.json` (or your global config), and `opencode` stamps `OPENCODE=1` on the processes it runs, which `doctor.mjs` uses to detect the CLI on its own. See [`docs/OPENCODE.md`](OPENCODE.md) for the MCP setup, the permission rules, and troubleshooting.
 
 ## Pi
 

@@ -87,7 +87,18 @@ const COPILOT_NO_TOOLS = 'career-ops-no-tools';
 
 export const CLI_CANDIDATES = [
   { bin: 'claude', args: p => ['-p', p, '--tools', '', '--disallowedTools', '*'] },
-  { bin: 'opencode', args: p => ['run', p], env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: 'deny' }) } },
+  {
+    bin: 'opencode',
+    // `--standalone` is what makes the fence reachable. OPENCODE_CONFIG_CONTENT
+    // is read by the OpenCode SERVER, not by the client: `opencode run` attaches
+    // to the shared background server, whose environment is not this process's,
+    // so the permission rules never arrive (verified on opencode v2.2.7 — with
+    // the variable set and no --standalone, the model's bash tool still ran and
+    // wrote its file). A private server inherits this process's environment, so
+    // the rules arrive. Same fix as web/src/lib/cli-fencing.mjs.
+    args: p => ['run', '--standalone', p],
+    env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: 'deny' }) },
+  },
   { bin: 'codex', args: p => ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', p] },
   {
     bin: 'copilot',
