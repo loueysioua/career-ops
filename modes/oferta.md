@@ -182,14 +182,14 @@ When gated in, scan the JD body (case-insensitive) for a statement, within one s
 
 ## Block B — Match with CV
 
-One table, one row per significant JD requirement, mapped to exact evidence in the primary files (`cv.md` first, then `article-digest.md`, `config/profile.yml`, `modes/_profile.md`). Block B **is** the requirement→evidence mapping for the whole report: never emit a second matrix that re-enumerates the same requirements, because nothing keeps two lists in sync and the first disagreement between them contradicts the report in a way no test can catch.
+One table, one row per significant JD requirement, mapped to exact evidence in the primary files (the CVs first — `cv.md` and the other CVs in `cvs/` — then `article-digest.md`, `config/profile.yml`, `modes/_profile.md`). Block B **is** the requirement→evidence mapping for the whole report: never emit a second matrix that re-enumerates the same requirements, because nothing keeps two lists in sync and the first disagreement between them contradicts the report in a way no test can catch.
 
 Any flag lines from Block A's geo-mismatch and work-authorization checks sit above the table, unchanged.
 
 ### Two-pass rule (generation order is the mechanism)
 
-1. **Pass 1 — JD only.** Fill `Requirement`, `JD signal` and `Importance` from the JD text alone, **before reading `cv.md`**.
-2. **Pass 2 — CV.** Then read `cv.md` (and the other primary files) and fill `Match` and `Evidence / gap`. **Importance is never revised in pass 2.**
+1. **Pass 1 — JD only.** Fill `Requirement`, `JD signal` and `Importance` from the JD text alone, **before reading `cv.md`** (or any other CV).
+2. **Pass 2 — CV.** Then read `cv.md` and every other CV in `{DATA_ROOT}/cvs/` (plus the other primary files) and fill `Match` and `Evidence / gap`. **Importance is never revised in pass 2.**
 
 `_shared.md`'s Sources of Truth table marks the primary files `ALWAYS`, which declares **scope** — what may ever back a claim — not read order. Pass 1 is the one point in the evaluation where read order carries meaning, so it is stated here rather than left to that table.
 

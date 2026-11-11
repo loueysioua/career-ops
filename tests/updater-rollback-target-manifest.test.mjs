@@ -49,6 +49,8 @@ const expectedOverlaps = [
   'interview-prep/sessions/README.md',
   'documents/.gitkeep',
   'documents/README.md',
+  'cvs/.gitkeep',
+  'cvs/README.md',
   'data/.gitkeep',
   'data/offers/.gitkeep',
   'data/parser-output/.gitkeep',

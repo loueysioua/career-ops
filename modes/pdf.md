@@ -14,7 +14,7 @@ When a CV is reused or lightly tailored for an existing application, initialize 
 
 Run `npm run jd:similarity -- {bundle-root}/jd/current.md {bundle-root}/jd/previous.md` when both comparison sources exist. Record the visible decision (`reuse`, `reuse-with-edits`, or `regenerate`), score, source CV/JD paths, and changed sections in `decision/reuse.json`. Strongly discourage applications scoring below 4.0/5 and proceed only when the user explicitly overrides that recommendation. Reuse only after a visible `reuse` result or an explicit user override; never silently reuse when a source is missing. The PDF manifest supports these nested paths and continues to link them to the report. Flat `output/` paths remain valid for one-off PDFs.
 
-1. Read `cv.md` as the source of truth
+1. Read `cv.md` as the source of truth, and every other CV in `{DATA_ROOT}/cvs/` for facts it omits. `cv.md` is the **baseline** — the structure (sections, order, which roles are listed) comes from it alone. The other CVs are **evidence**: a role, metric, certification or project that appears only there is still the candidate's and may be used, but it never widens the baseline's structure. See `_shared.md` → "Multiple CVs".
 2. Ask the user for the JD if it is not in context (text or URL)
    For a new posting (no tracker row yet), run `node precheck-duplicate.mjs --company "$COMPANY" --title "$TITLE" [--url "$URL"] [--req "$REQ"]` once first (read-only, advisory; pass `--url` when the JD came as a URL and `--req` when the posting shows a requisition ID; set each variable from the posting with single quotes or pass an argument array, never paste posting text into the command string) and surface any hit before drafting.
 3. Extract 15-20 keywords from the JD

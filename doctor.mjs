@@ -59,6 +59,7 @@ try {
 // dynamically lets that failure be caught and reported with the fix.
 let hasYamlContent, loadYaml, dotenv, AGENT_CLIS, validateProfile, EXAMPLE_PATH;
 let resolveExtractorMode, auditUserTemplates, browserLaunchOptions, resolveBrowserExecutable, snapshotBrowserProcessEnv;
+let resolveCvSources;
 try {
   [
     { hasYamlContent, loadYaml },
@@ -68,6 +69,7 @@ try {
     { resolveExtractorMode },
     { auditUserTemplates },
     { browserLaunchOptions, resolveBrowserExecutable, snapshotBrowserProcessEnv },
+    { resolveCvSources },
   ] = await Promise.all([
     import('./lib/yaml-document.mjs'),
     import('dotenv'),
@@ -76,6 +78,11 @@ try {
     import('./browser-extract.mjs'),
     import('./cv-templates.mjs'),
     import('./lib/browser-launch.mjs'),
+    // The CV set resolver reads the profile, so it needs js-yaml and cannot be
+    // loaded without node_modules. Dynamic, like the yaml wrapper above it:
+    // doctor must still START in a checkout with no install, so that it can
+    // report the missing dependency rather than dying on the import.
+    import('./lib/cv-sources.mjs'),
   ]);
 } catch (err) {
   let missing = [];
@@ -1555,6 +1562,32 @@ function checkCvShape(root) {
   };
 }
 
+// The user's other CVs, and what career-ops makes of them. A candidate may
+// hold several (a master, a one-page version, a market variant, an older
+// draft) and every evaluation reads all of them, so a broken one — a file
+// that cannot be parsed, a path that no longer exists — is worth saying once
+// at setup time rather than at every evaluation.
+//
+// Advisory, never a failure: the baseline cv.md is what career-ops needs, and
+// an extra CV the user cannot open costs the run some evidence, not the run.
+function checkCvSources(root) {
+  let resolved;
+  try {
+    resolved = resolveCvSources(root, { profilePath: profilePathFor(root) });
+  } catch (err) {
+    return { warn: true, label: `CV set could not be resolved (${err.message})` };
+  }
+  for (const warning of resolved.warnings) {
+    return { warn: true, label: warning };
+  }
+  if (!resolved.extras.length) return null;
+  const labels = resolved.extras.map((entry) => entry.label);
+  return {
+    pass: true,
+    label: `Additional CVs: ${labels.length} (${labels.join(', ')}) — read as evidence for facts cv.md omits`,
+  };
+}
+
 // The user's own templates under data/templates/ (#5777). Advisory: a template
 // that stopped resolving, or lost a slot every shipped variant keeps, is named
 // here instead of surfacing at render time.
@@ -1650,6 +1683,7 @@ async function main() {
     checkProfileShape(projectRoot),
     checkTitleFilterConflicts(projectRoot),
     checkCvShape(projectRoot),
+    checkCvSources(projectRoot),
     checkUserTemplates(projectRoot),
     ...(userLayerWritable
       ? [checkAutoDir('data'), checkPipelineFile(), checkAutoDir('output'), checkAutoDir('reports')]

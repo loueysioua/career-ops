@@ -30,7 +30,10 @@ If no source was given, ask the user for one.
 ## Pipeline
 
 1. **Load context.** Read `cv.md` (its existing section names and formatting are
-   the template to match) and `article-digest.md` if present.
+   the template to match), every other CV in `{DATA_ROOT}/cvs/` (for facts
+   `cv.md` omits — a role or achievement that appears only there is still the
+   candidate's, and the entry may already exist there, so check before
+   proposing it), and `article-digest.md` if present.
 2. **Fetch the source (zero-key):**
    - **GitHub repo** → the public REST API (`https://api.github.com/repos/<owner>/<repo>`
      for name/description/topics/language/stars/timestamps) **plus** the README

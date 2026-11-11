@@ -33,6 +33,7 @@ import { loadCanonicalStates, resolveCanonicalStateId } from './tracker-utils.mj
 import { rankSkipBlockers, parseRequirementImportance } from './skip-blockers.mjs';
 
 import { getCareerOpsRoot, getProfilePath, rawTrackerPath, resolveTrackerPath } from './path-resolver.mjs';
+import { readCvSources } from './lib/cv-sources.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const CAREER_OPS = getCareerOpsRoot();
@@ -44,7 +45,11 @@ const APPS_FILE = resolveTrackerPath(CAREER_OPS);
 // directory stays a candidate for a tracker file that is itself a symlink,
 // whose links are written relative to its target.
 const TRACKER_DIR = dirname(resolve(rawTrackerPath(CAREER_OPS)));
-const CV_FILE = join(CAREER_OPS, 'cv.md');
+// Every CV the user has, not only cv.md. The gap map SUPPRESSES what it finds
+// as known, so a skill the user has but only wrote down in a second CV would
+// otherwise be reported as a gap to learn. The profile that lists those extra
+// CVs is the one CAREER_OPS_PROFILE names, so an override is honoured here too.
+const cvSources = readCvSources(CAREER_OPS, { profilePath: getProfilePath() });
 const PROFILE_FILE = getProfilePath();
 const STATES_FILE = join(ROOT, 'templates/states.yml');
 
@@ -262,6 +267,19 @@ export function readOptionalText(filePath) {
   } catch {
     return '';
   }
+}
+
+/**
+ * Every CV the user has, as one text for the known-skills extraction.
+ *
+ * The texts are joined with a newline so a phrase cannot straddle two files,
+ * and the markdown comments are stripped PER FILE first: an unclosed `<!--` at
+ * the end of one CV would otherwise swallow the head of the next one.
+ *
+ * @returns {string}
+ */
+export function allCvText() {
+  return cvSources.documents.map((d) => stripMarkdownComments(d.content)).join('\n');
 }
 
 // --- Machine Summary + Gap table parsing ---
@@ -513,7 +531,7 @@ function analyze(minReports) {
   }
 
   const knownText = knownSkillsText(
-    readOptionalText(CV_FILE),
+    allCvText(),
     readOptionalText(PROFILE_FILE),
     warnProfileUnparseable,
   );
@@ -962,14 +980,14 @@ if (isMain) {
       }
 
       // Assemble the known-skills text (cv + profile), matching aggregate mode.
-      // Targeted mode additionally falls back to cv-example.md when cv.md is absent
-      // so a fresh checkout still produces a meaningful comparison.
+      // Targeted mode additionally falls back to cv-example.md when there is no
+      // CV at all so a fresh checkout still produces a meaningful comparison.
       const profileRaw = readOptionalText(PROFILE_FILE);
-      let cvRaw = readOptionalText(CV_FILE);
-      // Fall back to the shipped example when cv.md is absent OR unreadable, so a
-      // fresh checkout still produces a meaningful comparison. Keyed on the read
-      // result rather than existsSync: a cv.md that exists but cannot be read is,
-      // for this purpose, the same as one that is not there.
+      let cvRaw = allCvText();
+      // Fall back to the shipped example when there is no CV OR none could be
+      // read, so a fresh checkout still produces a meaningful comparison. Keyed
+      // on the read result rather than existsSync: a cv.md that exists but
+      // cannot be read is, for this purpose, the same as one that is not there.
       if (!cvRaw) cvRaw = readOptionalText(join(CAREER_OPS, 'cv-example.md'));
 
       const { gaps: gapList, excludedAsKnown, knownSkills } =

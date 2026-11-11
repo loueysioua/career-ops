@@ -28,6 +28,7 @@ import { fileURLToPath } from 'url';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { validateFlags } from './lib/cli-flags.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
+import { resolveCvSources } from './lib/cv-sources.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -307,8 +308,10 @@ export async function compileLatexFile(absPath, content, outputPath, compileOnly
  * @returns {Promise<{verdict: 'pass'|'warn'|'block'|'skipped', reason?: string, result?: object}>}
  */
 export async function runLatexFactGate(content, { root = getCareerOpsRoot(), extraSources = [], label } = {}) {
-  const cvPath = join(root, 'cv.md');
-  if (!existsSync(cvPath)) return { verdict: 'skipped', reason: `no cv.md in ${root}` };
+  // Every CV the user has, not just the baseline one: a claim the baseline
+  // omits but an additional CV holds is still the user's claim (lib/cv-sources.mjs).
+  const sources = resolveCvSources(root);
+  if (!sources.all.length) return { verdict: 'skipped', reason: `no cv.md in ${root}` };
   // Imported lazily, as generate-pdf.mjs does: a test that copies this script
   // alone into a temp workspace has no cv.md and never reaches the import.
   const { assertFacts, stripMarkup } = await import('./verify-cv-facts.mjs');
@@ -319,14 +322,15 @@ export async function runLatexFactGate(content, { root = getCareerOpsRoot(), ext
   const extraPaths = extraSources.map(p => resolve(p));
   const missing = extraPaths.filter(p => !existsSync(p));
   if (missing.length) return { verdict: 'block', reason: `--source file not found: ${missing.join(', ')}` };
-  const sourcePaths = [cvPath, join(root, 'article-digest.md'), ...extraPaths];
+  const cvPaths = sources.all.map(entry => entry.path);
+  const sourcePaths = [...cvPaths, join(root, 'article-digest.md'), ...extraPaths];
   // The voice check allows wording the candidate wrote: cv.md, any --source
   // file, voice-dna.md, and the cv-facts allow lists. article-digest.md
   // backs facts, not phrasing.
   // Strip each file on its own. Joined first, one \begin{document} in a
   // --source .tex file drops the cv.md lines that came before it.
   let voiceSource = '';
-  for (const sourcePath of [cvPath, ...extraPaths]) {
+  for (const sourcePath of [...cvPaths, ...extraPaths]) {
     const source = await readFile(sourcePath, 'utf-8');
     voiceSource += `\n${stripMarkup(source, { keepLineBreaks: true })}`;
   }

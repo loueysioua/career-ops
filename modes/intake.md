@@ -25,6 +25,9 @@ confirm.**
 - `documents/` — intake folder (user layer, gitignored): `cv/`, `linkedin/`,
   `diplomas/`, `references/`
 - `config/profile.yml`, `cv.md`, `modes/_profile.md` — merge targets
+- `cvs/` — additional CVs (user layer). A source that is itself a CV can be
+  kept here as a separate file instead of being flattened into `cv.md`; see
+  "Where a CV source goes" below
 - `data/intake-state.json` — fingerprints of already-ingested sources
   (written by `intake.mjs --commit`, user layer)
 - `data/intake-snapshots/` — the extracted text of each committed source, the
@@ -79,7 +82,7 @@ Its first line says which case you got:
 
 ## Step 3 — Map to proposals (read-before-write)
 
-Read the current `config/profile.yml`, `cv.md`, and `modes/_profile.md`
+Read the current `config/profile.yml`, `cv.md`, `modes/_profile.md`
 FIRST. Then, per source type:
 
 - **CV** → experience entries, education, skills
@@ -87,6 +90,30 @@ FIRST. Then, per source type:
   about-summary
 - **diplomas/transcripts** → verified degree names, dates, coursework
 - **references** → referee quotes, competency language
+
+### Where a CV source goes
+
+A CV-shaped source has two possible homes, and the user picks:
+
+- **As the baseline** — merged into `cv.md`, which is the CV a tailored CV is
+  cut from and the file the renderer validates section order against.
+- **As an additional CV** — written to `cvs/{name}.md`, where career-ops
+  reads it as evidence for facts `cv.md` omits, without touching the
+  baseline's structure.
+
+Default to the baseline when the source is clearly the user's current master
+CV and `cv.md` is empty or stale. Default to an **additional CV** when the
+source is a variant — a one-page version, a market/language variant, a
+LinkedIn export, an older master — or when the user says so. Ask, once, when
+it is genuinely ambiguous: "keep this as an extra CV in `cvs/`, or merge it
+into `cv.md`?" A file kept in `cvs/` must still be **readable as a CV** (the
+shape in `examples/cv-example.md`); if the source is not in that shape, write
+it as markdown prose into `cvs/{name}.md` — it is read for facts, not parsed
+for structure.
+
+Never merge two CV-shaped sources into one file without saying so: the
+flattening loses the difference between them, and that difference is often
+the reason the user kept both.
 
 Rules (non-negotiable):
 
@@ -117,11 +144,15 @@ Show one consolidated proposal table: target file → field → proposed value
 → source. Wait for the user's explicit confirmation (all / per-item).
 **STOP here if the user doesn't confirm — do not write.**
 
+A proposal whose target is a new file names it explicitly (`cvs/{name}.md`),
+so the user sees that a new CV is being created and not a merge.
+
 ## Step 5 — Write and record
 
 1. Apply the confirmed edits to `config/profile.yml` / `cv.md` /
-   `modes/_profile.md` directly (agent edit — these files are user layer;
-   no script writes them).
+   `modes/_profile.md` / `cvs/{name}.md` directly (agent edit — these files
+   are user layer; no script writes them). When a proposal creates a file in
+   `cvs/`, create the directory if it is missing.
 2. Record **only the sources that were actually merged**, so the next run
    proposes only new material:
 

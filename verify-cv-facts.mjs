@@ -15,8 +15,9 @@
 import { existsSync, readFileSync } from 'fs';
 import { isAbsolute, join, basename } from 'path';
 import { isMainModule } from './lib/is-main-module.mjs';
-import { getCareerOpsRoot } from './path-resolver.mjs';
+import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
 import { findExperienceSections, headingText, boldLineText, toPlainText, normalizePandocLine } from './lib/cv-markdown.mjs';
+import { cvSourcePaths } from './lib/cv-sources.mjs';
 
 // Two roots, because this gate compares user-layer files against a user-layer
 // config and previously resolved neither from the user's data root.
@@ -38,7 +39,10 @@ import { findExperienceSections, headingText, boldLineText, toPlainText, normali
 // So one invocation both invented failures and silently skipped half its
 // checks. --source and --config still override; only the defaults move.
 const DATA_ROOT = getCareerOpsRoot();
-const DEFAULT_SOURCES = [join(DATA_ROOT, 'cv.md'), join(DATA_ROOT, 'article-digest.md')];
+// Every CV the user has, not just the baseline one. A claim the baseline omits
+// but an additional CV in cvs/ holds is still the user's claim, and the gate
+// blocked it before. See lib/cv-sources.mjs.
+const DEFAULT_SOURCES = [...cvSourcePaths(DATA_ROOT, { profilePath: getProfilePath() }), join(DATA_ROOT, 'article-digest.md')];
 const DEFAULT_CONFIG = join(DATA_ROOT, 'config', 'cv-facts.json');
 const TOOL_PROSE_WORDS = new Set([
   'a', 'an', 'and', 'at', 'built', 'by', 'containerized', 'deployment',

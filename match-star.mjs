@@ -23,10 +23,11 @@
 import { readFileSync, existsSync } from 'fs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { join } from 'path';
-import { getCareerOpsRoot } from './path-resolver.mjs';
+import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
 import { parseStories, splitStoryBlocks, isValidStory } from './lib/story-bank.mjs';
 import { parseStoryBlocks, classifyEntries } from './story-provenance-check.mjs';
 import { flagValue, safeIntFlag, validateFlags } from './lib/cli-flags.mjs';
+import { readCvSources } from './lib/cv-sources.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
 
@@ -35,7 +36,17 @@ import { flagValue, safeIntFlag, validateFlags } from './lib/cli-flags.mjs';
 // process was started — so this read the checkout's story bank (usually absent)
 // for anyone whose data lives elsewhere.
 const STORY_BANK_PATH = join(getCareerOpsRoot(), 'interview-prep', 'story-bank.md');
-const CV_PATH = join(getCareerOpsRoot(), 'cv.md');
+
+// Every CV the user has, not only cv.md: a figure can be evidenced in a long
+// master CV, a one-page variant, or an older version that still holds the
+// detail the new one dropped.
+//
+// They are kept SEPARATE rather than concatenated. The provenance classifier
+// scopes a number to the CV sentence it sits in, so a number at the end of one
+// file and a unit at the start of the next must not read as one figure; each
+// file is checked on its own.
+const cvSources = readCvSources(getCareerOpsRoot(), { profilePath: getProfilePath() });
+const CV_TEXTS = cvSources.documents.map((d) => d.content);
 
 const UNCONFIRMED = '[unconfirmed figure]';
 
@@ -161,7 +172,7 @@ function maskFigures(text) {
  * ⚠️ lines for the figures in `prose` that do not trace to cv.md.
  * @param {object} story
  * @param {string} prose - the exact text about to be printed
- * @param {string} cvText
+ * @param {string|string[]} cvText - the user's CVs, one text or a list of them
  * @returns {string[]}
  */
 function provenanceWarnings(story, prose, cvText) {
@@ -180,7 +191,8 @@ function provenanceWarnings(story, prose, cvText) {
  * @param {object} story - a parseStories() story, plus `provenance` (its
  *   Provenance marker, lowercased, or null)
  * @param {string} question
- * @param {{cvText?: string}} [opts] - cv.md, to check the figures against
+ * @param {{cvText?: string|string[]}} [opts] - the user's CVs, to check the
+ *   figures against: one CV's text, or a list of every CV they have
  * @returns {string}
  */
 function formatAts(story, question, { cvText = '' } = {}) {
@@ -240,7 +252,6 @@ const content = readFileSync(STORY_BANK_PATH, 'utf-8');
 const provenanceAt = new Map(parseStoryBlocks(content)
   .filter(e => e.kind === 'story').map(e => [e.line, e.provenance]));
 const stories = parseStories(content).map(s => ({ ...s, provenance: provenanceAt.get(s.line) ?? null }));
-const cvText = existsSync(CV_PATH) ? readFileSync(CV_PATH, 'utf-8') : '';
 
 // Say what is in the file but cannot be read, so an empty or short bank is
 // never mistaken for the whole story (#4514). Never rewrites the file: it is
@@ -302,7 +313,7 @@ for (let i = 0; i < ranked.length; i++) {
   const { story, score: s } = ranked[i];
   console.log(`${'─'.repeat(40)}`);
   console.log(`Match ${i + 1} of ${ranked.length} (score: ${s})\n`);
-  console.log(formatAts(story, question, { cvText }));
+  console.log(formatAts(story, question, { cvText: CV_TEXTS }));
   console.log('');
 }
 

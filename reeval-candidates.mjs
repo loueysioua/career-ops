@@ -13,8 +13,10 @@
  *
  * PRIMARY SOURCES (the AGENTS.md "Primary / user-authored" tier that carries
  * facts): `cv.md`, `article-digest.md`, `config/profile.yml` (through
- * getProfilePath(), so CAREER_OPS_PROFILE is honored) and `modes/_profile.md`,
- * all under the data root. A missing file is reported and ignored.
+ * getProfilePath(), so CAREER_OPS_PROFILE is honored), `modes/_profile.md` and
+ * the additional-CV directory `cvs/`, all under the data root. A missing file
+ * is reported and ignored. `cvs/` is dated by the newest file inside it: a
+ * change to ANY of the user's CVs re-opens the evaluations scored before it.
  *
  * WHEN A SOURCE LAST CHANGED
  *   - git: the file is tracked in the git repository that contains it and has
@@ -66,6 +68,7 @@ import { localToday } from './lib/local-today.mjs';
 import { parseDate } from './lib/parse-date.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { canonicalizeTrackerPath, getCareerOpsRoot, getProfilePath, resolveTrackerPath } from './path-resolver.mjs';
+import { walkTree } from './lib/walk-tree.mjs';
 
 const CODE_ROOT = dirname(fileURLToPath(import.meta.url));
 const STATES_FILE = join(CODE_ROOT, 'templates/states.yml');
@@ -73,7 +76,14 @@ const STATES_FILE = join(CODE_ROOT, 'templates/states.yml');
 export const DEFAULT_STATUS = 'Evaluated';
 
 /** Primary sources, by the name the output uses. Order is the display order. */
-export const SOURCE_NAMES = ['cv.md', 'article-digest.md', 'config/profile.yml', 'modes/_profile.md'];
+export const SOURCE_NAMES = ['cv.md', 'article-digest.md', 'config/profile.yml', 'modes/_profile.md', 'cvs/'];
+
+/**
+ * The additional-CV directory's name in SOURCE_NAMES. It is a DIRECTORY, not a
+ * file: a change to ANY CV under it re-opens the evaluations that were scored
+ * before that change.
+ */
+const CV_DIR_SOURCE = 'cvs/';
 
 /** Only the report header is read; a report's archived JD can run long. */
 const MAX_REPORT_BYTES = 64 * 1024;
@@ -135,10 +145,45 @@ function git(cwd, args) {
 }
 
 /**
+ * The newest modification time among the files under a directory.
+ *
+ * The additional-CV directory is a source as a whole, so "when did it last
+ * change" is the newest file in it. Hidden files are skipped (a `.DS_Store`
+ * is not a CV).
+ *
+ * The walk is lib/walk-tree.mjs's: this repository has exactly one directory
+ * recursion, and it applies the nested-checkout guard on every descent.
+ *
+ * @param {string} dir - Absolute path to the directory
+ * @returns {import('fs').Stats|null} The newest file's stats, or null when the
+ *   directory holds no readable file
+ */
+function newestFileIn(dir) {
+  let files;
+  try {
+    files = walkTree(dir, { skip: (entry) => entry.name.startsWith('.') });
+  } catch {
+    return null;
+  }
+  let newest = null;
+  for (const file of files) {
+    try {
+      const stats = statSync(file);
+      if (!stats.isFile()) continue;
+      if (!newest || stats.mtimeMs > newest.mtimeMs) newest = stats;
+    } catch {
+      // An unreadable entry is not a source change anyone can act on.
+    }
+  }
+  return newest;
+}
+
+/**
  * When one source file last changed.
  *
  * @param {string} name - Display name (`cv.md`).
- * @param {string} path - Where the file is expected.
+ * @param {string} path - Where the file is expected. A DIRECTORY (the
+ *   additional-CV directory) is dated by the newest file inside it.
  * @returns {{source: string, path: string, exists: boolean, changed?: string,
  *   changedAt?: string, basis?: 'git'|'mtime', note?: string}}
  */
@@ -151,6 +196,23 @@ export function sourceChange(name, path) {
     stat = statSync(real);
   } catch {
     return { ...base, exists: false };
+  }
+  if (stat.isDirectory()) {
+    // A directory of CVs changes when any of them changes. There is no commit
+    // to read: the files in it are the user's, and in the default layout they
+    // are not tracked by git at all.
+    const newest = newestFileIn(real);
+    if (!newest) {
+      return { ...base, exists: false, note: 'the directory holds no CV files' };
+    }
+    return {
+      ...base,
+      exists: true,
+      changed: localToday(newest.mtime),
+      changedAt: newest.mtime.toISOString(),
+      basis: 'mtime',
+      note: 'approximate: newest file under the directory, file modification time',
+    };
   }
   if (!stat.isFile()) return { ...base, exists: false };
 
@@ -206,8 +268,13 @@ export function primarySourceChanges(dataRoot, { profilePath = getProfilePath() 
     'article-digest.md': join(dataRoot, 'article-digest.md'),
     'config/profile.yml': profilePath,
     'modes/_profile.md': join(dataRoot, 'modes', '_profile.md'),
+    [CV_DIR_SOURCE]: join(dataRoot, 'cvs'),
   };
-  return SOURCE_NAMES.map(name => sourceChange(name, paths[name]));
+  // The additional-CV directory is a source only when it is there. A data root
+  // without one has nothing to compare against, and listing it anyway would
+  // report a source the user does not have.
+  const names = SOURCE_NAMES.filter((name) => name !== CV_DIR_SOURCE || existsSync(paths[CV_DIR_SOURCE]));
+  return names.map(name => sourceChange(name, paths[name]));
 }
 
 /**
@@ -395,9 +462,10 @@ const USAGE = `Usage:
   node reeval-candidates.mjs --help                # show this message
 
 Lists tracker rows whose last evaluation predates the latest change to
-cv.md, article-digest.md, config/profile.yml or modes/_profile.md (git commit
-date when the file is committed, file mtime otherwise). Read-only: it never
-re-evaluates and never writes to the tracker, a report or any other file.`;
+cv.md, article-digest.md, config/profile.yml, modes/_profile.md or a CV in
+cvs/ (git commit date when the file is committed, file mtime otherwise).
+Read-only: it never re-evaluates and never writes to the tracker, a report or
+any other file.`;
 
 function fail(message) {
   console.error(message);
@@ -474,7 +542,7 @@ if (isMainModule(import.meta.url)) {
 
   const sources = primarySourceChanges(dataRoot);
   if (!sources.some(s => s.exists)) {
-    warnings.push(`None of ${SOURCE_NAMES.join(', ')} was found under ${dataRoot}; nothing to compare against.`);
+    warnings.push(`None of ${sources.map((s) => s.source).join(', ')} was found under ${dataRoot}; nothing to compare against.`);
   }
 
   const result = computeReevalCandidates(trackerMd, { sources, statuses, linkDirs, dataRoot, states });

@@ -176,6 +176,8 @@ const CLOSURE = {
     'tracker-parse.mjs', 'theme-style.mjs', 'lib/page-format.mjs', 'lib/is-main-module.mjs', 'lib/yaml-document.mjs',
     'lib/browser-launch.mjs',
     'cv-sections-core.mjs', 'cv-experience-order.mjs', 'lib/local-today.mjs',
+    // The CV set: lib/cv-sources.mjs, and the one walker it walks with.
+    'lib/cv-sources.mjs', 'lib/walk-tree.mjs', 'lib/scratch-dirs.mjs',
     'tracker-aliases.json',
   ],
 };

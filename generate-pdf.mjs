@@ -71,6 +71,7 @@ import { validateCvExperienceOrder } from './cv-experience-order.mjs';
 import { resolvePdfIndexPath, resolveTrackerPath, resolveWorkspaceRootFor, writeFileAtomic } from './tracker-utils.mjs';
 import { withPipelineLock } from './pipeline-lock.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
+import { resolveCvSources } from './lib/cv-sources.mjs';
 import { localToday } from './lib/local-today.mjs';
 import { stripEmptyRenderedSections } from './cv-sections-core.mjs';
 import { PAGE_CSS_SIZE, PAGE_FORMATS, normalizePageFormat, pageFormatForCountry, resolvePageFormat } from './lib/page-format.mjs';
@@ -1826,8 +1827,12 @@ async function runFactGate(html, label, rawHtml = html, { strictFactCheck = fals
  * @returns {{sourcePaths: string[], configPath: string}}
  */
 function factGateInputs() {
+  // Every CV in the workspace, not just the baseline cv.md: a claim the
+  // baseline omits but an additional CV holds is still the user's claim, and
+  // the gate blocked it before (lib/cv-sources.mjs).
+  const sources = resolveCvSources(workspaceRoot, { profilePath: workspaceProfilePath() });
   return {
-    sourcePaths: [resolve(workspaceRoot, 'cv.md'), resolve(workspaceRoot, 'article-digest.md')],
+    sourcePaths: [...sources.all.map((entry) => entry.path), resolve(workspaceRoot, 'article-digest.md')],
     configPath: resolve(workspaceRoot, 'config', 'cv-facts.json'),
   };
 }

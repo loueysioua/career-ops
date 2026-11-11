@@ -227,6 +227,35 @@ spend_tier: standard
 
 cv:
   output_format: "html" # "html" (default), "latex", or "text" (tailored markdown, no PDF)
+  #
+  # (Optional) Additional CVs to read alongside cv.md.
+  #
+  # You may hold more than one CV: a long master CV, a one-page version, a
+  # variant for another market, or an older one that still holds a detail the
+  # newer one dropped. career-ops reads all of them, so an evaluation is not
+  # scored against a fraction of your record.
+  #
+  # Drop files into {DATA_ROOT}/cvs/ and they are found automatically — no
+  # configuration needed. Use this list only for CVs kept elsewhere (a synced
+  # folder, a shared drive). Each path is relative to the data root, or
+  # absolute.
+  #
+  #   sources:
+  #     - cvs/master-cv.md
+  #     - ~/Documents/cv/short-version.md
+  #
+  # Listing is also how you state precedence: a file listed here outranks one
+  # merely found in cvs/, and cv.md outranks both. article-digest.md outranks
+  # everything. When two CVs disagree and cv.md does not settle it, career-ops
+  # asks you rather than picking the flattering one.
+  #
+  # cv.md stays the BASELINE: it is the CV a tailored CV is cut from, and its
+  # section order is what the renderer validates against. The other CVs are
+  # evidence — a fact that appears only in one of them is still yours and may
+  # be used, but it never changes the baseline's structure.
+  #
+  # The `/career-ops intake` mode can create files in cvs/ for you.
+  # sources: []
   # (Optional) Canva resume design ID for visual CV generation via /career-ops pdf.
   # Find it in your Canva design URL: https://www.canva.com/design/DAxxxxxxx/...
   # The ID starts with "D" and is 11 characters long.

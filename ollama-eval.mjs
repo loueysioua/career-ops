@@ -35,6 +35,7 @@ import {
 } from './reserve-report-num.mjs';
 import { TokenAccumulator, formatBreakdown, normalizeOpenAIUsage } from './utils/token-tracker.mjs';
 import { buildBudgetedPrompt } from './lib/context-budget.mjs';
+import { joinExtraCvContents } from './lib/cv-sources.mjs';
 import { assertLlmRequestAllowed } from './lib/llm-outbound.mjs';
 import { installPiiInterceptor } from './lib/pii-interceptor.mjs';
 import {
@@ -261,6 +262,8 @@ console.log('\n📂  Loading context files...');
 const sharedContext = readFile(PATHS.shared, 'modes/_shared.md');
 const ofertaLogic   = readFile(PATHS.oferta, 'modes/oferta.md');
 const cvContent     = readFile(PATHS.cv,     'cv.md');
+// The user's other CVs (cvs/), read as evidence for facts cv.md omits.
+const extraCvContent = joinExtraCvContents(DATA_ROOT, { profilePath: getProfilePath() }).text;
 const profileContent = readFile(PATHS.profile, 'modes/_profile.md');
 // _custom.md is optional: an absent file is a valid end state, so no warning.
 const customContent = existsSync(PATHS.custom) ? readFileSync(PATHS.custom, 'utf-8').trim() : '';
@@ -274,6 +277,7 @@ const { contextBody, budgetReport } = buildBudgetedPrompt({
   sharedContent: sharedContext,
   ofertaContent: ofertaLogic,
   cvContent,
+  extraCvContent,
   profileYml,
   profileContent,
   customContent,

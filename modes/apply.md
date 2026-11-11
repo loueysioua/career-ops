@@ -255,7 +255,7 @@ tailoring that made the application relevant.
 | Role descriptions, responsibilities, achievement bullets, and every other free-text field describing a role | The tailored CV |
 | Education, certifications | The tailored CV; `config/profile.yml` for credentials the CV omits |
 | Skills, summary, profile headline | The tailored CV |
-| A section the tailored CV omits entirely — a role it does not list, an education entry it drops | `cv.md` — the fallback, never the default |
+| A section the tailored CV omits entirely — a role it does not list, an education entry it drops | `cv.md` — the fallback, never the default. Then the other CVs in `{DATA_ROOT}/cvs/`, for a whole section neither the tailored CV nor `cv.md` carries |
 
 Where the tailored CV and `cv.md` disagree, the tailored CV wins: it is the
 document the reviewer is holding. `cv.md` supplies whole sections the tailored CV
@@ -266,6 +266,12 @@ spliced together, and it is the failure this step exists to prevent. This change
 which document supplies a fact, not what may be claimed: the tailored CV is a
 reformulation of `cv.md`, and the fabrication rules in AGENTS.md →
 "Source-of-Truth Boundary" apply to both without exception.
+
+The same fallback reaches the other CVs in `{DATA_ROOT}/cvs/`, and only for a
+**whole section** the two documents above do not carry: a role listed only in
+another CV is a fact the candidate has, so it may fill a form question the
+tailored CV leaves open — but it never fills a gap inside a section the tailored
+CV already covers. See `_shared.md` → "Multiple CVs".
 
 Two rows can claim one field. A dropped education entry matches both the education
 row and the whole-section fallback. The order there is `config/profile.yml` first,

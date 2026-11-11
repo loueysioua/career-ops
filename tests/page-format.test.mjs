@@ -262,6 +262,9 @@ function coverSandbox() {
   copyFileSync(join(ROOT, 'lib', 'is-main-module.mjs'), join(dir, 'lib', 'is-main-module.mjs'));
   copyFileSync(join(ROOT, 'lib', 'cv-markdown.mjs'), join(dir, 'lib', 'cv-markdown.mjs'));
   copyFileSync(join(ROOT, 'lib', 'yaml-document.mjs'), join(dir, 'lib', 'yaml-document.mjs'));
+  copyFileSync(join(ROOT, 'lib', 'cv-sources.mjs'), join(dir, 'lib', 'cv-sources.mjs'));
+  copyFileSync(join(ROOT, 'lib', 'walk-tree.mjs'), join(dir, 'lib', 'walk-tree.mjs'));
+  copyFileSync(join(ROOT, 'lib', 'scratch-dirs.mjs'), join(dir, 'lib', 'scratch-dirs.mjs'));
   // cv-templates.mjs decodes HTML entities when it reads a template's meta
   // block, so the sandbox needs this too. Without it the copied script dies at
   // module load with ERR_MODULE_NOT_FOUND and the format assertion below never

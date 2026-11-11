@@ -61,6 +61,7 @@ import {
   formatReportNumber, releaseReportNumbers, reserveReportNumbers,
 } from './reserve-report-num.mjs';
 import { buildBudgetedPrompt } from './lib/context-budget.mjs';
+import { joinExtraCvContents } from './lib/cv-sources.mjs';
 import { loadYaml } from './lib/yaml-document.mjs';
 
 // ---------------------------------------------------------------------------
@@ -413,6 +414,8 @@ for (const extraDir of extraModesDirs) {
 // keep name/contact details out of the prompt sent to the model.
 const profileYmlRaw  = readFile(PATHS.profileYml,  'config/profile.yml');
 const cvContent      = redactIfEnabled(readFile(PATHS.cv,      'cv.md'),            profileYmlRaw);
+// The user's other CVs (cvs/), read as evidence for facts cv.md omits.
+const extraCvContent = redactIfEnabled(joinExtraCvContents(DATA_ROOT, { profilePath: getProfilePath() }).text, profileYmlRaw);
 const profileContent = redactIfEnabled(readFile(PATHS.profile, 'modes/_profile.md'), profileYmlRaw);
 const profileYml     = redactIfEnabled(profileYmlRaw, profileYmlRaw);
 // _custom.md is optional: an absent file is a valid end state, so no warning.
@@ -426,6 +429,7 @@ const { contextBody, budgetReport } = buildBudgetedPrompt({
   sharedContent: sharedContext,
   ofertaContent: ofertaPrompt,
   cvContent,
+  extraCvContent,
   profileYml,
   profileContent,
   customContent,

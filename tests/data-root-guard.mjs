@@ -41,6 +41,7 @@ export const GUARDED_PATHS = [
   'reports',
   'interview-prep',
   'documents',
+  'cvs',
   'output',
   'jds',
   'writing-samples',

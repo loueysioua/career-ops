@@ -58,8 +58,9 @@ For each suggested title, show exactly:
 
 - **Title** — the market title as actually posted, not an invented hybrid
 - **Axis** — Lateral / Stretch / Pivot
-- **CV evidence** — 1–2 lines from `cv.md` **quoted verbatim**. If you cannot
-  quote it, do not suggest it.
+- **CV evidence** — 1–2 lines from the candidate's CVs (`cv.md`, then any other
+  CV in `{DATA_ROOT}/cvs/`) **quoted verbatim**. If you cannot quote it, do
+  not suggest it.
 - **Honest gap note** — what a hiring manager would question; "none" is allowed
   for Lateral suggestions but must be earned
 - **Market-reality note** — how common the title is, where it tends to be

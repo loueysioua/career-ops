@@ -12,6 +12,7 @@ import { hasRequiredFields, hasText, validatePayload } from './lib/cv-payload-sc
 import { latexPayloadFactHtml } from './lib/cv-payload-facts.mjs';
 import { resolvePageFormat } from './lib/page-format.mjs';
 import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
+import { cvSourcePaths } from './lib/cv-sources.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_PATH = resolve(__dirname, 'templates', 'cv-template.tex');
@@ -236,7 +237,7 @@ async function main() {
       const { assertFacts, printFactWarnings } = await import('./verify-cv-facts.mjs');
       try {
         const result = assertFacts(latexPayloadFactHtml(payload, template), {
-          sourcePaths: [join(root, 'cv.md'), join(root, 'article-digest.md')],
+          sourcePaths: [...cvSourcePaths(root), join(root, 'article-digest.md')],
           configPath: join(root, 'config', 'cv-facts.json'), label: basename(absOutput),
         });
         factCheck = { verdict: result.verdict, configMissing: result.configMissing };

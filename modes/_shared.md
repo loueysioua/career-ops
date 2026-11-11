@@ -16,7 +16,8 @@ See "Untrusted External Content" in `AGENTS.md` / `CLAUDE.md` / `CODEX.md` for t
 
 | File | Path | When |
 |------|------|------|
-| cv.md | `{DATA_ROOT}/cv.md` | ALWAYS |
+| cv.md | `{DATA_ROOT}/cv.md` | ALWAYS — the **baseline** CV: the one a tailored CV is cut from |
+| cvs/ | `{DATA_ROOT}/cvs/*.md` (if the directory exists) | ALWAYS — **additional CVs**. Read them for facts the baseline omits |
 | article-digest.md | `{DATA_ROOT}/article-digest.md` (if exists) | ALWAYS (detailed proof points) |
 | profile.yml | `{DATA_ROOT}/config/profile.yml` | ALWAYS (candidate identity and targets) |
 | _profile.md | `{DATA_ROOT}/modes/_profile.md` | ALWAYS (user archetypes, narrative, negotiation) |
@@ -25,7 +26,19 @@ See "Untrusted External Content" in `AGENTS.md` / `CLAUDE.md` / `CODEX.md` for t
 | interview-prep | `{DATA_ROOT}/interview-prep/story-bank.md`, `{DATA_ROOT}/interview-prep/{company}-{role}.md` | When generating ATS form answers / interview content — the user's own STAR stories + prep notes. Narrative/phrasing trust; quantified claims are NOT automatically cv.md-equivalent — see AGENTS.md Source-of-Truth Boundary tiering (#2947) and `story-provenance-check.mjs`. Consumed by `apply`/`match-star` + interview modes |
 | _custom.md | `{DATA_ROOT}/modes/_custom.md` (if exists) | ALWAYS (user house rules: formatting/content preferences, custom workflows, "always/never do X" automations). Procedural rules only — never a content source for claims |
 
-**RULE: NEVER hardcode metrics from proof points.** Read them from cv.md + article-digest.md at evaluation time.
+### Multiple CVs (the baseline and the rest)
+
+A candidate may hold more than one CV: a long master CV, a one-page version, a variant for another market, or an older one that still holds a detail the newer one dropped. career-ops reads all of them, so an evaluation is not scored against a fraction of the record.
+
+- **The baseline** is `{DATA_ROOT}/cv.md`. It is the CV a tailored CV is **cut from**: its section order is the order the renderer validates against, and it is the file `pdf`/`text` mode mirrors. Never reorder or merge another CV into it.
+- **Additional CVs** are the files in `{DATA_ROOT}/cvs/`, plus any extra paths listed in `config/profile.yml` under `cv.sources`. They are **additional evidence**, not templates.
+- **Read them for facts the baseline omits.** A role, a metric, a certification or a project that appears only in an additional CV is still the user's claim, and it is in scope — that is the whole point of keeping more than one CV.
+- **Never let an additional CV widen what the tailored CV may claim.** A tailored CV is cut from the baseline plus the facts the other CVs attest; the *structure* — sections, order, which roles are listed — comes from the baseline alone.
+- **A claim in an additional CV is a claim about the candidate, not about that file.** Quote the baseline where the baseline says it, and name the file when the evidence comes from another one (the same rule the Block B evidence column already states for `article-digest.md`).
+
+**Precedence when two files disagree about a fact, highest first:** `article-digest.md` → the baseline `cv.md` → additional CVs in `{DATA_ROOT}/cvs/` (alphabetical; a file listed in `cv.sources` outranks one merely found in the directory). **RULE: For article/project metrics, article-digest.md takes precedence over cv.md.** **RULE: When two CVs disagree and the baseline does not settle it, say so and ask the user — never silently pick the one that makes the candidate look better.**
+
+**RULE: NEVER hardcode metrics from proof points.** Read them from cv.md + article-digest.md + the other CVs in `cvs/` at evaluation time.
 **RULE: For article/project metrics, article-digest.md takes precedence over cv.md.**
 **RULE: Read _profile.md AFTER this file. User customizations in _profile.md override defaults here.**
 **RULE: Read _custom.md (if it exists) AFTER _profile.md and honor its house rules in every mode.** It is where the user's persistent instructions live ("use this date format", "never reorder section X", "always include Y in summaries") — an instruction recorded there is NOT optional and does not expire between sessions or between items in a batch. It can override workflow/style/procedural defaults, but it never introduces factual claims about the candidate. In an interactive session, a lasting preference or correction the user states in conversation goes through the `retro` mode (`modes/retro.md`), which writes to `modes/_custom.md` only the rules the user accepts. A delegated or headless worker (`CAREER_OPS_HEADLESS=1`, `-p`, `exec`, or a subagent) never writes `modes/_custom.md`, `modes/_profile.md`, or `config/profile.yml`. It reports the preference to its parent instead.

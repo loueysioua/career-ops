@@ -62,11 +62,12 @@ import { spawnSync } from 'child_process';
 import { normalizeCompany } from './tracker-utils.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
+import { cvSourcePaths, readCvSources } from './lib/cv-sources.mjs';
 import {
   boldLineText, findExperienceSections, headingText, toPlainText, EXPERIENCE_HEADING_NAMES,
 } from './lib/cv-markdown.mjs';
 
-const CV_PATH = join(getCareerOpsRoot(), 'cv.md');
+const CV_PATHS = cvSourcePaths(getCareerOpsRoot());
 
 // ── cv.md experience parsing ────────────────────────────────────────
 //
@@ -133,6 +134,35 @@ export function parseCvExperience(cvText) {
   }
 
   return entries;
+}
+
+/**
+ * Merge the experience entries of several CVs into one list.
+ *
+ * Two CVs usually describe the same job the same way, so identical entries
+ * are collapsed. Two CVs that give the SAME job a DIFFERENT title are not
+ * collapsed: both survive, and the check reports the key as ambiguous
+ * instead of picking a winner. The user knows which of their own CVs is
+ * right; the tool does not.
+ *
+ * The order of `documents` is the precedence order, so the first CV's entry
+ * is the one a reader sees first.
+ *
+ * @param {Array<{path: string, label: string, content: string}>} documents
+ * @returns {Array<{company: string, title: string, dates: string}>}
+ */
+export function mergeCvExperiences(documents) {
+  const merged = [];
+  const seen = new Set();
+  for (const doc of documents) {
+    for (const entry of parseCvExperience(doc.content)) {
+      const key = JSON.stringify([entry.company, entry.dates, entry.title]);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(entry);
+    }
+  }
+  return merged;
 }
 
 // ── Tailored-CV payload parsing (modes/pdf.md Step 17 JSON schema) ──
@@ -738,8 +768,8 @@ if (isMainModule(import.meta.url)) {
       console.error('       node cv-title-check.mjs --self-test');
       process.exit(1);
     }
-    if (!existsSync(CV_PATH)) {
-      console.error(`Error: ${CV_PATH} not found — this is a user-layer file, create it first.`);
+    if (!CV_PATHS.length) {
+      console.error(`Error: no cv.md found — this is a user-layer file, create it first.`);
       process.exit(1);
     }
 
@@ -751,7 +781,9 @@ if (isMainModule(import.meta.url)) {
       process.exit(1);
     }
 
-    const cvEntries = parseCvExperience(readFileSync(CV_PATH, 'utf-8'));
+    // Every CV the user has, so a title that only an additional CV records is
+    // still checked (lib/cv-sources.mjs).
+    const cvEntries = mergeCvExperiences(readCvSources(getCareerOpsRoot()).documents);
     let tailoredEntries;
     try {
       tailoredEntries = parseTailoredExperience(payload);

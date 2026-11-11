@@ -176,6 +176,10 @@ export const MANIFEST_USER_PATH_OVERLAPS = Object.freeze([
   'interview-prep/sessions/README.md',
   'documents/.gitkeep',
   'documents/README.md',
+  // The additional-CV folder's own scaffold. The CVs beside it are the
+  // user's and stay in USER_PATHS.
+  'cvs/.gitkeep',
+  'cvs/README.md',
   // Empty placeholders in otherwise user-owned directories (#4708).
   'data/.gitkeep',
   'data/offers/.gitkeep',
@@ -335,6 +339,7 @@ const BOOTSTRAP_PATHS = [
 export const USER_PATHS = [
   '.career-ops-web/',
   'cv.md',
+  'cvs/',
   'config/profile.yml',
   'modes/_profile.md',
   'modes/_custom.md',

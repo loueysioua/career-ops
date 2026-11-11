@@ -1022,6 +1022,9 @@ ${sections.join('\n')}</div>
     // pipeline-lock.mjs runs the shared lock protocol from lib/dir-lock.mjs (#5358).
     copyFileSync(join(ROOT, 'lib', 'dir-lock.mjs'), join(sandbox, 'lib', 'dir-lock.mjs'));
     copyFileSync(join(ROOT, 'lib', 'yaml-document.mjs'), join(sandbox, 'lib', 'yaml-document.mjs'));
+    copyFileSync(join(ROOT, 'lib', 'cv-sources.mjs'), join(sandbox, 'lib', 'cv-sources.mjs'));
+    copyFileSync(join(ROOT, 'lib', 'walk-tree.mjs'), join(sandbox, 'lib', 'walk-tree.mjs'));
+    copyFileSync(join(ROOT, 'lib', 'scratch-dirs.mjs'), join(sandbox, 'lib', 'scratch-dirs.mjs'));
     // generate-pdf.mjs dates its PDF index row with lib/local-today.mjs.
     copyFileSync(join(ROOT, 'lib', 'local-today.mjs'), join(sandbox, 'lib', 'local-today.mjs'));
 
@@ -1172,6 +1175,9 @@ export const chromium = {
     // pipeline-lock.mjs runs the shared lock protocol from lib/dir-lock.mjs (#5358).
     copyFileSync(join(ROOT, 'lib', 'dir-lock.mjs'), join(sandbox, 'lib', 'dir-lock.mjs'));
     copyFileSync(join(ROOT, 'lib', 'yaml-document.mjs'), join(sandbox, 'lib', 'yaml-document.mjs'));
+    copyFileSync(join(ROOT, 'lib', 'cv-sources.mjs'), join(sandbox, 'lib', 'cv-sources.mjs'));
+    copyFileSync(join(ROOT, 'lib', 'walk-tree.mjs'), join(sandbox, 'lib', 'walk-tree.mjs'));
+    copyFileSync(join(ROOT, 'lib', 'scratch-dirs.mjs'), join(sandbox, 'lib', 'scratch-dirs.mjs'));
     // generate-pdf.mjs dates its PDF index row with lib/local-today.mjs.
     copyFileSync(join(ROOT, 'lib', 'local-today.mjs'), join(sandbox, 'lib', 'local-today.mjs'));
 

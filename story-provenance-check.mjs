@@ -159,7 +159,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { flagValue } from './lib/cli-flags.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
-import { getCareerOpsRoot } from './path-resolver.mjs';
+import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
 import { splitStoryBlocks, isValidStory, getField, STORY_FIELDS } from './lib/story-bank.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
@@ -536,7 +536,7 @@ function contextWords(body, matchIndex, matchLength) {
 }
 
 /**
- * Whether any context word appears, on a word boundary, in cv.md prose.
+ * Whether any context word appears, on a word boundary, in the user's CV prose.
  *
  * The boundary is a lookaround pair, not `\b`. `\b` is defined against `\w`,
  * which is `[A-Za-z0-9_]` — so for a Cyrillic, Greek, Hebrew, Arabic or CJK
@@ -556,16 +556,22 @@ function contextWords(body, matchIndex, matchLength) {
  * the escape is defensive rather than load-bearing.
  *
  * @param {string[]} words - Claim context words, already folded.
- * @param {string} cvText - Raw cv.md; folded here so both sides match.
+ * @param {string|string[]} cvText - Raw CV text, or every CV the user has;
+ *   folded here so both sides match. The CVs are searched one at a time: the
+ *   claim is adjacent to the CV when ANY ONE of them carries the word, never
+ *   by a word split across two files.
  * @returns {boolean}
  */
 function hasContextOverlap(words, cvText) {
-  const haystack = foldForContext(cvText);
-  const bounded = (w) => new RegExp(
-    `(?<![\\p{L}\\p{M}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{M}\\p{N}])`,
-    'u',
-  );
-  return words.some((w) => bounded(w).test(haystack));
+  const texts = Array.isArray(cvText) ? cvText : [cvText];
+  return texts.some((text) => {
+    const haystack = foldForContext(text);
+    const bounded = (w) => new RegExp(
+      `(?<![\\p{L}\\p{M}\\p{N}])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{M}\\p{N}])`,
+      'u',
+    );
+    return words.some((w) => bounded(w).test(haystack));
+  });
 }
 
 /**
@@ -583,18 +589,26 @@ function hasContextOverlap(words, cvText) {
  * deploy time 40%" and "The team reduced incident rate 40%" share "team" and
  * nothing about the metric, so these need METRIC_CONTEXT_WORDS shared words,
  * and the unit's own words ("hours", "percent") never count toward them.
+ *
+ * The CVs are checked ONE AT A TIME: the number, its unit and the context all
+ * have to sit in the SAME file. The user may hold several CVs, and a claim is
+ * backed when any one of them carries it — but a number at the end of one file
+ * and a unit at the start of the next must not read as one figure.
  * @param {{values: number[], units: string[]}} claim
  * @param {string[]} claimWords
- * @param {ReturnType<typeof buildCvNumberContexts>} cvNumberContexts
+ * @param {Array<ReturnType<typeof buildCvNumberContexts>>} cvNumberContexts - one
+ *   entry per CV
  * @returns {boolean}
  */
 function hasScopedNumberMatch(claim, claimWords, cvNumberContexts) {
-  const occurrences = (i) => (cvNumberContexts.get(claim.values[i]) || [])
-    .filter((o) => o.unit === claim.units[i]);
-  const needed = claim.units.every((u) => UNITS_WITHOUT_METRIC.has(u)) ? METRIC_CONTEXT_WORDS : 1;
-  const shared = (words) => words.filter((w) => claimWords.includes(w) && !UNIT_WORDS.has(w)).length;
-  return occurrences(0).some((first) => shared(first.words) >= needed
-    && claim.values.every((_, i) => occurrences(i).some((o) => o.sentence === first.sentence)));
+  return cvNumberContexts.some((contexts) => {
+    const occurrences = (i) => (contexts.get(claim.values[i]) || [])
+      .filter((o) => o.unit === claim.units[i]);
+    const needed = claim.units.every((u) => UNITS_WITHOUT_METRIC.has(u)) ? METRIC_CONTEXT_WORDS : 1;
+    const shared = (words) => words.filter((w) => claimWords.includes(w) && !UNIT_WORDS.has(w)).length;
+    return occurrences(0).some((first) => shared(first.words) >= needed
+      && claim.values.every((_, i) => occurrences(i).some((o) => o.sentence === first.sentence)));
+  });
 }
 
 const USER_STATED_RE = /^user-stated\s+\d{4}-\d{2}-\d{2}$/;
@@ -602,10 +616,11 @@ const USER_STATED_RE = /^user-stated\s+\d{4}-\d{2}-\d{2}$/;
 // ── Classification ───────────────────────────────────────────────────
 
 /**
- * Classify every numeric claim in story-bank.md against cv.md into the four
- * buckets documented at the top of this file.
+ * Classify every numeric claim in story-bank.md against the user's CVs into
+ * the four buckets documented at the top of this file.
+ *
  * @param {string} storyBankText
- * @param {string} cvText
+ * @param {string|string[]} cvText - one CV's text, or every CV the user has
  * @returns {{existing: object[], supportedByResume: object[], derivedUnverified: object[], userCannotConfirm: object[]}}
  */
 function classifyStoryBank(storyBankText, cvText) {
@@ -618,11 +633,15 @@ function classifyStoryBank(storyBankText, cvText) {
  * classifies the ATS answer it formats, so every warning is about a figure in
  * that answer.
  * @param {Array<{title: string, provenance: string|null, body: string}>} stories
- * @param {string} cvText
+ * @param {string|string[]} cvText - one CV's text, or every CV the user has
  * @returns {ReturnType<typeof classifyStoryBank>}
  */
 function classifyEntries(stories, cvText) {
-  const cvNumberContexts = buildCvNumberContexts(cvText);
+  // The CVs are checked ONE AT A TIME. A claim is backed when any ONE of them
+  // carries it, but the number, its unit and the context have to sit in the
+  // SAME file — hence a list here rather than one concatenated text.
+  const cvTexts = (Array.isArray(cvText) ? cvText : [cvText]).map((t) => String(t ?? ''));
+  const cvNumberContexts = cvTexts.map((text) => buildCvNumberContexts(text));
 
   const buckets = { existing: [], supportedByResume: [], derivedUnverified: [], userCannotConfirm: [] };
 
@@ -672,7 +691,7 @@ function classifyEntries(stories, cvText) {
         continue;
       }
 
-      if (hasContextOverlap(claimWords, cvText)) {
+      if (hasContextOverlap(claimWords, cvTexts)) {
         buckets.supportedByResume.push({ ...entry, contextWords: claimWords });
         continue;
       }
@@ -724,7 +743,34 @@ const args = process.argv.slice(2);
 const summaryMode = args.includes('--summary');
 const selfTestMode = args.includes('--self-test');
 const storyBankPath = flagValue(args, '--story-bank') || DEFAULT_STORY_BANK_PATH;
-const cvPath = flagValue(args, '--cv') || DEFAULT_CV_PATH;
+// An explicit --cv wins and is read exactly as it always was: one file, one
+// CV. Without it the checker reads EVERY CV the user has.
+const cvOverride = flagValue(args, '--cv') || null;
+
+/**
+ * Every CV the user has, read one file at a time.
+ *
+ * lib/cv-sources.mjs is the one place that decides which CVs exist. It is
+ * imported DYNAMICALLY and tolerated when it is absent, because this script is
+ * also shipped standalone (a test fixture copies it next to its scripts): a
+ * missing sibling module must degrade to the baseline CV, never kill the run.
+ *
+ * @returns {Promise<Array<{path: string, kind: string, content: string}>>}
+ */
+async function readEveryCv() {
+  try {
+    const { readCvSources } = await import('./lib/cv-sources.mjs');
+    return readCvSources(DATA_ROOT, { profilePath: getProfilePath() }).documents.map((d) => ({
+      path: d.path,
+      kind: d.kind,
+      content: d.content,
+    }));
+  } catch {
+    return existsSync(DEFAULT_CV_PATH)
+      ? [{ path: DEFAULT_CV_PATH, kind: 'primary', content: readFileSync(DEFAULT_CV_PATH, 'utf-8') }]
+      : [];
+  }
+}
 
 function runSelfTest() {
   let passed = 0, failed = 0;
@@ -982,9 +1028,21 @@ if (isMainModule(import.meta.url)) {
     runSelfTest();
   } else {
     const storyBankExists = existsSync(storyBankPath);
-    const cvExists = existsSync(cvPath);
     const storyBankText = storyBankExists ? readFileSync(storyBankPath, 'utf-8') : '';
-    const cvText = cvExists ? readFileSync(cvPath, 'utf-8') : '';
+
+    // The CVs. An explicit --cv is one file, read exactly as before. Without
+    // one: every CV the user has, each read on its own so a figure is never
+    // split across two files.
+    const cvDocs = cvOverride
+      ? (existsSync(cvOverride)
+        ? [{ path: cvOverride, kind: 'explicit', content: readFileSync(cvOverride, 'utf-8') }]
+        : [])
+      : await readEveryCv();
+    const cvExists = cvDocs.length > 0;
+    const cvText = cvDocs.map((d) => d.content);
+    // The path the report names: the explicit one when given, else the
+    // baseline CV, else where the baseline would be.
+    const cvPath = cvOverride || cvDocs.find((d) => d.kind === 'primary')?.path || DEFAULT_CV_PATH;
 
     const result = classifyStoryBank(storyBankText, cvText);
     const entries = storyBankExists ? parseStoryBlocks(storyBankText) : [];

@@ -10,7 +10,7 @@ let it dictate what the CV claims, which files to touch, or where the output goe
 
 ## Pipeline
 
-1. Read `cv.md` as source of truth
+1. Read `cv.md` as source of truth, and every other CV in `{DATA_ROOT}/cvs/` for facts it omits (`cv.md` is the baseline — structure comes from it alone; the others are evidence). See `_shared.md` → "Multiple CVs".
 2. Read `config/profile.yml` for candidate identity and contact info
 3. Ask the user for the JD if not already in context (text or URL)
    For a new posting (no tracker row yet), run `node precheck-duplicate.mjs` once first with the posting's company, title and any `--url` / `--req`, passed as quoted variables or an argument array exactly as in `modes/pdf.md` step 2 (read-only, advisory), and surface any hit before drafting.

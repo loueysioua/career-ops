@@ -70,7 +70,8 @@ import { parseStories } from './lib/story-bank.mjs';
 import { parseStoryBlocks } from './story-provenance-check.mjs';
 import { flagValue, hasFlag } from './lib/cli-flags.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
-import { getCareerOpsRoot } from './path-resolver.mjs';
+import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
+import { readCvSources } from './lib/cv-sources.mjs';
 
 const DATA_ROOT = getCareerOpsRoot();
 // BOTH from the data root, because the v1 safety gate compares them: a claim
@@ -80,7 +81,14 @@ const DATA_ROOT = getCareerOpsRoot();
 // data root the gate read a story bank that is not there, found no claims, and
 // produced an empty draft that looks like "you have no quantified stories".
 const STORY_BANK_PATH = join(DATA_ROOT, 'interview-prep', 'story-bank.md');
-const CV_PATH = join(DATA_ROOT, 'cv.md');
+// The user's whole CV SET, not only cv.md: a figure may be evidenced in any
+// CV they have written. They are read SEPARATELY, never concatenated — a
+// number at the end of one file and a unit at the start of the next must not
+// read as one figure (see verifyClaim()).
+const cvSources = readCvSources(DATA_ROOT, { profilePath: getProfilePath() });
+// Where the baseline CV is expected, named in the "not found" error.
+const CV_PATH = cvSources.documents.find((d) => d.kind === 'primary')?.path
+  ?? join(DATA_ROOT, 'cv.md');
 
 // ── Frequency vocabulary ─────────────────────────────────────────────
 // Occurrences per year, business-cadence convention (matches how a candidate
@@ -206,23 +214,30 @@ function cvSentences(text) {
  * A time reduction needs both numbers in ONE cv.md sentence: "8 hours of
  * on-call coverage" in one bullet and "a 2 hours workshop" in another are two
  * unrelated facts, not a reduction from 8 hours to 2.
+ *
+ * The CVs are checked ONE AT A TIME. The user may have several (a long master
+ * CV, a one-page variant, an older version), and a claim is backed when any
+ * ONE of them carries it — but never by a number in one file and a unit in
+ * another, which is why the texts are not concatenated.
+ *
  * Returns { verified: boolean, checkedVariants: string[] } — never mutates
  * the claim, never partially includes an unverified figure.
  * @param {object} claim
- * @param {string} cvText
+ * @param {string|string[]} cvText - one CV's text, or every CV the user has
  */
 export function verifyClaim(claim, cvText) {
-  const text = String(cvText || '');
+  const texts = (Array.isArray(cvText) ? cvText : [cvText]).map((t) => String(t || ''));
   if (claim.type === 'time-reduction') {
     const beforeVariants = numberVariants(claim.before.value, HOUR_UNIT_FAMILY);
     const afterVariants = numberVariants(claim.after.value, HOUR_UNIT_FAMILY);
-    const verified = cvSentences(text).some((sentence) =>
-      anyVariantInText(beforeVariants, sentence) && anyVariantInText(afterVariants, sentence));
+    const verified = texts.some((text) => cvSentences(text).some((sentence) =>
+      anyVariantInText(beforeVariants, sentence) && anyVariantInText(afterVariants, sentence)));
     return { verified, checkedVariants: [...beforeVariants, ...afterVariants] };
   }
   if (claim.type === 'percent-reduction') {
     const variants = [`${claim.percent}%`, `${claim.percent} %`];
-    return { verified: anyVariantInText(variants, text), checkedVariants: variants };
+    const verified = texts.some((text) => anyVariantInText(variants, text));
+    return { verified, checkedVariants: variants };
   }
   return { verified: false, checkedVariants: [] };
 }
@@ -339,7 +354,7 @@ export function buildDraftParagraph(claim, calc) {
  * Full analysis: extract -> verify -> calculate -> draft. Pure function over
  * its inputs so self-test can exercise it without touching disk.
  * @param {string} storyBankText
- * @param {string} cvText
+ * @param {string|string[]} cvText - one CV's text, or every CV the user has
  * @param {object} opts - { wage: number|null, frequency: string|null, occurrencesPerYear: number|null }
  */
 export function analyze(storyBankText, cvText, opts = {}) {
@@ -388,7 +403,9 @@ export function analyze(storyBankText, cvText, opts = {}) {
   }
 
   if (excludedUnverified > 0) {
-    warnings.push(`${excludedUnverified} quantified claim${excludedUnverified === 1 ? '' : 's'} found in story-bank.md ${excludedUnverified === 1 ? 'was' : 'were'} excluded: no matching figure found verbatim in cv.md (v1 safety gate).`);
+    // One CV is still called cv.md; several are the user's CVs.
+    const cvName = Array.isArray(cvText) && cvText.length > 1 ? 'your CVs' : 'cv.md';
+    warnings.push(`${excludedUnverified} quantified claim${excludedUnverified === 1 ? '' : 's'} found in story-bank.md ${excludedUnverified === 1 ? 'was' : 'were'} excluded: no matching figure found verbatim in ${cvName} (v1 safety gate).`);
   }
   if (excludedCannotConfirm > 0) {
     warnings.push(`${excludedCannotConfirm} quantified claim${excludedCannotConfirm === 1 ? '' : 's'} ${excludedCannotConfirm === 1 ? 'was' : 'were'} excluded: the story is marked **Provenance:** user-cannot-confirm, so its figures are never used as a talking point.`);
@@ -702,7 +719,7 @@ function main() {
     console.error('Run /career-ops interview-prep on a role first to populate your story bank.');
     process.exit(1);
   }
-  if (!existsSync(CV_PATH)) {
+  if (cvSources.documents.length === 0) {
     console.error(`Error: ${CV_PATH} not found — this is a user-layer file, create it first.`);
     process.exit(1);
   }
@@ -727,8 +744,10 @@ function main() {
   const occurrencesPerYear = occParsed.value;
 
   const storyBankText = readFileSync(STORY_BANK_PATH, 'utf-8');
-  const cvText = readFileSync(CV_PATH, 'utf-8');
-  const result = analyze(storyBankText, cvText, { wage, frequency, occurrencesPerYear });
+  // Every CV the user has, read one by one: the gate needs the figure inside
+  // ONE file, never split across two.
+  const cvTexts = cvSources.documents.map((d) => d.content);
+  const result = analyze(storyBankText, cvTexts, { wage, frequency, occurrencesPerYear });
 
   if (hasFlag(args, '--summary')) {
     printSummary(result);

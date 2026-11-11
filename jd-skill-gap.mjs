@@ -30,9 +30,10 @@ import { readFileSync, existsSync } from 'fs';
 import { canonicalize, extractSkills, SKILL_PATTERN } from './skill-extract.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { join } from 'path';
-import { getCareerOpsRoot } from './path-resolver.mjs';
+import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
 import { normalizePandocLine, toPlainText } from './lib/cv-markdown.mjs';
 import { collapseMarkdownLinks } from './verify-cv-facts.mjs';
+import { readCvSources } from './lib/cv-sources.mjs';
 
 // ── Config ──────────────────────────────────────────────────────────
 
@@ -46,7 +47,16 @@ import { collapseMarkdownLinks } from './verify-cv-facts.mjs';
 // different users at once: one who never wrote a cv.md, and one who has one
 // sitting outside the data root this resolver just looked in. Naming only one
 // of them sends the other to the wrong fix.
-const CV_PATH = join(getCareerOpsRoot(), 'cv.md');
+//
+// The whole CV SET, not only cv.md: a skill the user has may be evidenced in
+// any CV they have written — a long master CV, a one-page variant, an older
+// version that still holds the detail the new one dropped. Reading one file
+// scored them against a fraction of their own record. The texts are joined
+// with a newline so a phrase cannot straddle two files.
+const cvSources = readCvSources(getCareerOpsRoot(), { profilePath: getProfilePath() });
+// Where the baseline CV is expected, named in the "not found" error below.
+const CV_PATH = cvSources.documents.find((d) => d.kind === 'primary')?.path
+  ?? join(getCareerOpsRoot(), 'cv.md');
 
 // ── JD skill extraction (regex, no LLM) ─────────────────────────────
 //
@@ -1330,14 +1340,16 @@ if (selfTestMode) {
     console.error('       node jd-skill-gap.mjs --self-test');
     process.exit(1);
   }
-  if (!existsSync(CV_PATH)) {
+  if (cvSources.documents.length === 0) {
     console.error(`Error: cv.md not found at ${CV_PATH}`);
     console.error('Create it there, or point CAREER_OPS_ROOT / CAREER_OPS_DATA_DIR (or a .career-ops-data marker) at the directory that already has it.');
     process.exit(1);
   }
 
   const jdText = readFileSync(jdPathArg, 'utf-8');
-  const cvText = readFileSync(CV_PATH, 'utf-8');
+  // Every CV the user has, joined with a newline so a phrase cannot span two
+  // files.
+  const cvText = cvSources.documents.map((d) => d.content).join('\n');
   const jdSkills = extractJdSkills(jdText);
   const result = classifySkillGaps(jdSkills, cvText);
   // Computed for BOTH output modes. The JSON branch is the one other tools
@@ -1359,7 +1371,9 @@ if (selfTestMode) {
     // did not recognize (#4879).
     if (!splitSkillsSection(cvText).namedSkillsText.trim()) {
       console.log('');
-      console.log('  ℹ️  No skills section recognized in cv.md (a heading containing "Skills" or "Competencies", or a top-level');
+      // One CV is still called cv.md; several are the user's CVs.
+      const cvName = cvSources.documents.length > 1 ? 'your CVs' : 'cv.md';
+      console.log(`  ℹ️  No skills section recognized in ${cvName} (a heading containing "Skills" or "Competencies", or a top-level`);
       console.log('     "Tools" / "Technologies" / "Tech Stack" heading), so nothing can be "already in Skills section".');
     }
 

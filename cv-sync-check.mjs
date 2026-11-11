@@ -18,6 +18,7 @@ import { getCareerOpsRoot, getProfilePath, hasProfileOverride } from './path-res
 import { validateFlags } from './lib/cli-flags.mjs';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { loadYaml } from './lib/yaml-document.mjs';
+import { resolveCvSources } from './lib/cv-sources.mjs';
 
 const CODE_ROOT = dirname(fileURLToPath(import.meta.url));
 const DATA_ROOT = getCareerOpsRoot();
@@ -65,14 +66,25 @@ function main() {
   const warnings = [];
   const errors = [];
 
-  // 1. Check cv.md exists
-  const cvPath = join(DATA_ROOT, 'cv.md');
-  if (!existsSync(cvPath)) {
+  // 1. Check the CVs exist. Every CV the user has counts: the baseline cv.md
+  // plus the additional ones, and a CV that is there but too short to be one
+  // is worth saying so about.
+  // The profile that lists the additional CVs is the one CAREER_OPS_PROFILE
+  // names, so an override is honoured here too.
+  const cvSources = resolveCvSources(DATA_ROOT, { profilePath: getProfilePath() });
+  if (cvSources.all.length === 0) {
     errors.push('cv.md not found in project root. Create it with your CV in markdown format.');
   } else {
-    const cvContent = readFileSync(cvPath, 'utf-8');
-    if (cvContent.trim().length < 100) {
-      warnings.push('cv.md seems too short. Make sure it contains your full CV.');
+    for (const cv of cvSources.all) {
+      let cvContent;
+      try {
+        cvContent = readFileSync(cv.path, 'utf-8');
+      } catch {
+        continue;
+      }
+      if (cvContent.trim().length < 100) {
+        warnings.push(`${cv.label} seems too short. Make sure it contains your full CV.`);
+      }
     }
   }
 
@@ -137,8 +149,11 @@ function main() {
 
   for (const { path, name } of filesToCheck) {
     if (!existsSync(path)) continue;
+    // Where the figure belongs: the CVs the user has, or the one they have.
+    const cvNames = cvSources.all.map((cv) => cv.label);
+    const cvPhrase = cvNames.length > 1 ? `your CVs (${cvNames.join(', ')})` : (cvNames[0] ?? 'cv.md');
     for (const { line, match } of hardcodedMetrics(readFileSync(path, 'utf-8'))) {
-      warnings.push(`${name}:${line} — Possible hardcoded metric: "${match}". Should this be read from cv.md/article-digest.md?`);
+      warnings.push(`${name}:${line} — Possible hardcoded metric: "${match}". Should this be read from ${cvPhrase}/article-digest.md?`);
     }
   }
 

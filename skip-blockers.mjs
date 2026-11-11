@@ -8,10 +8,10 @@
  * `skipBlockers`.
  *
  * This differs from the upskill gap map in two ways that matter. It does not
- * subtract skills already in cv.md, because a `partial` verdict on a skill the
- * CV lists means the CV names the skill and the evaluator found the evidence
- * thin. And it keeps requirements that are not tool names, such as people
- * management, which the skill vocabulary cannot see.
+ * subtract skills already in your CVs, because a `partial` verdict on a skill
+ * the CV lists means the CV names the skill and the evaluator found the
+ * evidence thin. And it keeps requirements that are not tool names, such as
+ * people management, which the skill vocabulary cannot see.
  */
 
 import { extractSkills } from './skill-extract.mjs';

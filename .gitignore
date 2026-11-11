@@ -281,6 +281,12 @@ plan/
 documents/*
 !documents/.gitkeep
 !documents/README.md
+# Additional CVs (master CV, one-page version, market variants) — user PII,
+# never commit. Same rule as documents/ above: only the system-owned scaffold
+# is tracked.
+cvs/*
+!cvs/.gitkeep
+!cvs/README.md
 # Intake fingerprints — the recorded source filenames may themselves carry
 # PII (e.g. cv/jane-doe-master-cv.pdf). #1723
 data/intake-state.json

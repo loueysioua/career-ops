@@ -10,6 +10,10 @@ existing `data/` user-layer rule.
 ## Initial CV import
 
 1. Run `node career-profile.mjs import [cv.md]` to preview extracted candidates.
+   The importer accepts any source path, so a second CV can be imported as
+   well: `node career-profile.mjs import cvs/{name}.md`. Import merges
+   additively and keeps existing profile entries, so importing several CVs
+   builds one profile from all of them.
 2. Review candidates with the user. For the interactive item-by-item gate, run
    `node career-profile.mjs import [cv.md] --review`; accept, edit, or skip each
    candidate. Nothing is written before this review.

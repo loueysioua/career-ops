@@ -38,6 +38,8 @@ Read `cv.md` for:
 - Professional summary (profile introduction source)
 - All achievement bullets across all roles (achievement selection pool)
 
+Read every other CV in `{DATA_ROOT}/cvs/` too, for facts `cv.md` omits — a role or achievement that appears only there is still the candidate's, and it belongs in the selection pool. `cv.md` remains the baseline: its structure and its wording are what the letter mirrors. See `_shared.md` → "Multiple CVs".
+
 Read `article-digest.md` if it exists — supplementary proof points and metrics take precedence over cv.md where they overlap.
 
 Read `modes/_writing.md` — the shared writing guidance (Voice DNA guardrail, Writing Style calibration, Professional Writing & ATS rules). A cover letter is candidate-facing prose, the same category that module governs, so it gets the same standard as the report and apply outputs instead of a thinner local one (#2006).
@@ -200,11 +202,11 @@ Wait for all four answers before proceeding to Step 7.
 
 ## Step 7 — Achievement selection (from cv.md only)
 
-Select 4-5 achievement bullets from `cv.md` only (`article-digest.md` may be read for context but is not a source of achievement bullets):
-1. Read all bullet points across all roles in cv.md
+Select 4-5 achievement bullets from the candidate's CVs (`cv.md` first, then the other CVs in `{DATA_ROOT}/cvs/`; `article-digest.md` may be read for context but is not a source of achievement bullets):
+1. Read all bullet points across all roles in `cv.md` and in every other CV in `{DATA_ROOT}/cvs/`
 2. Score each against the JD's top 3-4 required competencies
 3. Pick the 4-5 highest-scoring, with at least one metric per bullet
-4. Use the exact wording and metrics from cv.md — never paraphrase or invent
+4. Use the exact wording and metrics from the CV the bullet came from — never paraphrase or invent
 5. Apply keyword mirroring from Step 4 to the vocabulary around each bullet (not the metrics)
 
 Format: `**Bold lead phrase,** one sentence of impact with metric.` This describes the *rendered* bullet only — the `lead` value in the JSON payload (Step 9) must be a bare phrase with no trailing punctuation; `generate-cover-letter.mjs` appends the comma automatically when building the bullet.

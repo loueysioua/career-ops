@@ -29,9 +29,10 @@
 import { readFileSync, existsSync, statSync  } from 'fs';
 import { join, isAbsolute, basename } from 'path';
 import { isMainModule } from './lib/is-main-module.mjs';
-import { getCareerOpsRoot } from './path-resolver.mjs';
+import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
 import { extractSkills } from './skill-extract.mjs';
 import { collapseMarkdownLinks } from './verify-cv-facts.mjs';
+import { resolveCvSources } from './lib/cv-sources.mjs';
 
 // A normal path stays readable. A space or other shell syntax is quoted so the
 // example stays one argument.
@@ -919,27 +920,46 @@ async function runKeywordMatch(args) {
   const { keywords, keywordSource, keywordNote, sourceUrl } = resolved;
 
   const cvArg = args.cvPath;
-  const cvPath = cvArg
-    ? resolveUserPath(cvArg, getCareerOpsRoot())
-    : join(getCareerOpsRoot(), 'cv.md');
+  const dataRoot = getCareerOpsRoot();
+  // An explicit --cv wins and is read exactly as it was. Without one, every
+  // CV the user has is scanned: a keyword the user has but only wrote down in
+  // a second CV is a keyword the ATS would still find in their document.
+  const cvSources = cvArg ? null : resolveCvSources(dataRoot, { profilePath: getProfilePath() });
+  const cvPaths = cvArg
+    ? [resolveUserPath(cvArg, dataRoot)]
+    : cvSources.all.map((cv) => cv.path);
 
-  if (!existsSync(cvPath) || !statSync(cvPath).isFile()) {
-    console.error(`CV not found: ${cvPath}. Pass --cv <path> to point at your CV.`);
+  if (cvPaths.length === 0) {
+    console.error(`CV not found: ${join(dataRoot, 'cv.md')}. Pass --cv <path> to point at your CV.`);
+    process.exit(1);
+  }
+  const missingCv = cvPaths.find((p) => !existsSync(p) || !statSync(p).isFile());
+  if (missingCv) {
+    console.error(`CV not found: ${missingCv}. Pass --cv <path> to point at your CV.`);
     process.exit(1);
   }
 
-  let rawCv;
-  try {
-    rawCv = readFileSync(cvPath, 'utf-8');
-  } catch {
-    console.error(`Unable to read CV: ${cvPath}`);
-    process.exit(1);
-  }
   // The words a reader sees. htmlToText() already drops an HTML CV's hrefs; a
   // markdown CV kept its link targets, so "[modules](https://…/terraform-modules)"
   // counted Terraform as present in cv.md and missing in the same CV as HTML.
-  const cvText = /\.html?$/i.test(cvPath) ? htmlToText(rawCv) : collapseMarkdownLinks(rawCv);
-  const sourceLabel = cvArg ? basename(cvPath) : 'cv.md (base CV, before per-role tailoring)';
+  // Each CV is converted on its own, then the texts are joined with a newline
+  // so a keyword cannot be read across two files.
+  const cvTexts = cvPaths.map((p) => {
+    let raw;
+    try {
+      raw = readFileSync(p, 'utf-8');
+    } catch {
+      console.error(`Unable to read CV: ${p}`);
+      process.exit(1);
+    }
+    return /\.html?$/i.test(p) ? htmlToText(raw) : collapseMarkdownLinks(raw);
+  });
+  const cvText = cvTexts.join('\n');
+  const sourceLabel = cvArg
+    ? basename(cvPaths[0])
+    : (cvSources.all.length > 1
+      ? `your CVs (${cvSources.all.map((cv) => cv.label).join(', ')})`
+      : 'cv.md (base CV, before per-role tailoring)');
 
   const result = analyzeCoverage(keywords, cvText);
   const payload = {
