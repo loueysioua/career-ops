@@ -262,6 +262,8 @@ End the draft with: "How does this read? Once you approve I'll generate the PDF.
 
 ## Language rules (enforced in every sentence)
 
+**Output language follows the posting, not the global default.** For a French posting (JD in French, or a French hiring entity with a French JD), write the entire letter in French — unless the posting explicitly requires English fluency or states that English is a must. The candidate's French is Fluent, so a French cover letter is expected and preferred by French recruiters. The same rule applies to German postings (candidate's German is Basic — confirm before generating in German). See `_shared.md` → "Language for the posting (per-JD, overrides the global `language.output`)".
+
 `_writing.md` → Professional Writing & ATS Compatibility is the base: its cliché
 list, em-dash rule, sentence variation and specifics-over-abstractions guidance
 apply here in full, and `voice-dna.md` §3 supersedes that list when the user has
