@@ -39,6 +39,16 @@ A candidate may hold more than one CV: a long master CV, a one-page version, a v
 **Precedence when two files disagree about a fact, highest first:** `article-digest.md` → the baseline `cv.md` → additional CVs in `{DATA_ROOT}/cvs/` (alphabetical; a file listed in `cv.sources` outranks one merely found in the directory). **RULE: For article/project metrics, article-digest.md takes precedence over cv.md.** **RULE: When two CVs disagree and the baseline does not settle it, say so and ask the user — never silently pick the one that makes the candidate look better.**
 
 **RULE: NEVER hardcode metrics from proof points.** Read them from cv.md + article-digest.md + the other CVs in `cvs/` at evaluation time.
+
+### Language for the posting (per-JD, overrides the global `language.output`)
+
+The candidate may target postings in more than one language. When the posting's own language or market signals (currency, benefits, legal vocabulary, the hiring entity's country) indicate a non-English market, generate all human-facing output for that posting — CV, cover letter, application answers, report, outreach — in that market's language, **unless the posting explicitly requires English fluency or states that English is a must**. The candidate's global `language.output` is the default; a posting that is clearly French/German/Spanish/etc. overrides it for that run only.
+
+- **French postings (JD in French, or a French hiring entity with a French JD):** write in French. The candidate's French is Fluent, so a French CV/cover letter is expected and preferred by French recruiters. English is acceptable only when the posting states it is required or that the candidate must be fluent in English.
+- **German postings:** same rule with German; the candidate's German is Basic, so a German CV is only appropriate when the posting is in German and the candidate confirms they can handle it.
+- **English postings (or postings that explicitly require English fluency):** keep `language.output` as configured (usually English).
+- Never mix languages inside one document. If the JD is bilingual, pick the one the posting leads with and stay consistent.
+- `modes_dir` supplies market vocabulary (CDI/CDD, Probezeit, etc.) regardless of the output language; the output language decides the prose.
 **RULE: For article/project metrics, article-digest.md takes precedence over cv.md.**
 **RULE: Read _profile.md AFTER this file. User customizations in _profile.md override defaults here.**
 **RULE: Read _custom.md (if it exists) AFTER _profile.md and honor its house rules in every mode.** It is where the user's persistent instructions live ("use this date format", "never reorder section X", "always include Y in summaries") — an instruction recorded there is NOT optional and does not expire between sessions or between items in a batch. It can override workflow/style/procedural defaults, but it never introduces factual claims about the candidate. In an interactive session, a lasting preference or correction the user states in conversation goes through the `retro` mode (`modes/retro.md`), which writes to `modes/_custom.md` only the rules the user accepts. A delegated or headless worker (`CAREER_OPS_HEADLESS=1`, `-p`, `exec`, or a subagent) never writes `modes/_custom.md`, `modes/_profile.md`, or `config/profile.yml`. It reports the preference to its parent instead.
