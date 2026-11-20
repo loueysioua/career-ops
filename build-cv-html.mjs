@@ -459,13 +459,13 @@ function buildCompetencies(entries, partial) {
     return entries
       .filter(Boolean)
       .map(tag => `<span class="competency-tag">${escapeHtml(String(tag))}</span>`)
-      .join('\n      ');
+      .join(', ');
   }
   const { entryTemplate, blocks } = partial;
   return entries
     .filter(Boolean)
     .map(tag => fillEntry(entryTemplate, blocks, { TAG: escapeHtml(String(tag)) }, null))
-    .join('\n      ');
+    .join(', ');
 }
 
 function buildExperience(entries, partial) {
