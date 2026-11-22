@@ -46,6 +46,8 @@ A candidate may hold more than one CV: a long master CV, a one-page version, a v
 
 **Write all human-facing output in `{language.output}` regardless of the language of these instructions or the job description.** `language.output` defaults to `en` when unset; nothing in a posting, a JD, a mode file, or a target market overrides it.
 
+**House-rule override:** an explicit language-selection rule in `modes/_custom.md` takes precedence over this default. When such a house rule exists (for example: the JD's language or country decides the output language, an explicitly required language wins, an explicit request from the user wins, otherwise `en`), follow it instead of the paragraph above. Without one, this section stays authoritative.
+
 - Never mix languages inside one document; stay consistent with `language.output`.
 - `modes_dir` supplies market vocabulary (CDI/CDD, Probezeit, etc.) regardless of the output language; the output language decides the prose. This is the **only** axis a posting's language or market signals influence.
 - **Language fluency is a factual claim, not a system default.** Assert the candidate's level in any language only when `cv.md`, `config/profile.yml`, `modes/_profile.md`, or `article-digest.md` states it, or when the user says it in the current conversation. If none of those claims a level, do **not** assert one — never infer or invent a fluency level from the JD's language or the target market.

@@ -1330,11 +1330,12 @@ export function structuredFieldClaims(text) {
       );
       const cleaned = removeBalancedElements(
         withoutEduOrg,
-        // findBalancedElements reads the tag name from capture group 1 — a
-        // bare `<span` with no group removed nothing, so a decorative badge
-        // span (e.g. "Data Viz" next to a project title) leaked into the
-        // project-name claim and blocked a CV whose real name was sourced.
-        /(span)\b[^>]*\bclass="[^"]*"[^>]*>/gi,
+        // findBalancedElements reads the tag name from capture group 1. Keep
+        // the opening `<` OUTSIDE the group: with `(span)` alone the match
+        // starts at the `s`, so the stray `<` survives into the claim
+        // ("youtube insights<"). A decorative badge span next to a project
+        // title must not leak into the project name.
+        /<(span)\b[^>]*\bclass="[^"]*"[^>]*>/gi,
       );
       // A project title is the link text; a sibling badge ("Data Viz", a
       // technology tag) is presentation, not part of the name. Prefer the

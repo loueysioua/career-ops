@@ -117,9 +117,9 @@ Before executing any mode, read `config/profile.yml` if it exists and resolve:
 
 Inject this directive after loading the mode instructions and before producing any user-visible content:
 
-> Write all human-facing output in `{language.output}` regardless of the language of these instructions or of the job description. This includes reports, tracker notes, PDFs, cover letters, outreach, interview prep, form answers, and summaries. If `language.modes_dir` supplies market-specific vocabulary (one market, or several declared at once), keep the market logic but explain terms in `{language.output}` when needed.
+> Write all human-facing output in `{language.output}` **unless `modes/_custom.md` defines an explicit language-selection house rule for this task** — in that case the house rule wins and overrides this default. Otherwise write in `{language.output}` regardless of the language of these instructions or of the job description. This includes reports, tracker notes, PDFs, cover letters, outreach, interview prep, form answers, and summaries. If `language.modes_dir` supplies market-specific vocabulary (one market, or several declared at once), keep the market logic but explain terms in the chosen language when needed.
 
-`language.output` is authoritative for prose. `modes_dir` is market context; it must not force the prose language.
+`language.output` is the default for prose; an explicit language-selection house rule in `modes/_custom.md` takes precedence over it. `modes_dir` is market context; it must not force the prose language.
 
 ---
 

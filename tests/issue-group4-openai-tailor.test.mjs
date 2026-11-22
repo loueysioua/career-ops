@@ -13,6 +13,7 @@ import { join } from 'path';
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { NODE, ROOT } from './helpers.mjs';
+import { describeSpawn, exitedNonZero } from './helpers/describe-spawn.mjs';
 
 const CV = [
   '# Jane Doe',
@@ -74,8 +75,10 @@ function run(root) {
       '--url', base, '--model', 'test/model',
       '--jd', join(root, 'jd.txt'), '--report', join(root, 'report.md'),
     ], { cwd: root, timeout: 30000, env }, (err, stdout, stderr) => {
+      const code = err ? (err.code ?? 1) : 0;
       resolve({
-        code: err ? (err.code ?? 1) : 0,
+        code,
+        status: code, // describeSpawn/exitedNonZero read `status` (spawnSync shape)
         out: stdout + stderr,
         stderr,
         body: requests.length > before ? requests[requests.length - 1] : null,
@@ -148,7 +151,7 @@ test('F12: a fabricated metric is fact-checked and the artifact is not written',
   try {
     htmlResponse = '<!DOCTYPE html><html><body><h1>Jane Doe</h1><p>Reduced latency by 99 percent.</p></body></html>';
     const r = await run(root);
-    assert.notEqual(r.code, 0, 'a fabricated metric was accepted');
+    assert.ok(exitedNonZero(r), describeSpawn(r, 'a fabricated metric was accepted'));
     assert.deepEqual(r.saved, [], 'a fact-blocked HTML was written');
     assert.match(r.stderr, /Fact check failed/, 'no fact-gate failure reported');
     assert.match(r.stderr, /Nothing was saved/);
@@ -161,7 +164,7 @@ test('P4c: a JD-injected skill is rejected and the artifact is not written', asy
     htmlResponse = '<!DOCTYPE html><html><body><div class="section"><div class="section-title">Skills</div>'
       + '<div class="skills-grid"><div class="skill-item">Kubernetes</div></div></div></body></html>';
     const r = await run(root);
-    assert.notEqual(r.code, 0, 'an unsupported skill was accepted');
+    assert.ok(exitedNonZero(r), describeSpawn(r, 'an unsupported skill was accepted'));
     assert.deepEqual(r.saved, [], 'a skill-blocked HTML was written');
     assert.match(r.stderr, /skill\(s\) not backed/, 'no skill-support failure reported');
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -175,7 +178,7 @@ test('P4c: an injected duration on a supported skill is still rejected', async (
     htmlResponse = '<!DOCTYPE html><html><body><div class="section"><div class="section-title">Skills</div>'
       + '<div class="skills-grid"><div class="skill-item">7 years Python</div></div></div></body></html>';
     const r = await run(root);
-    assert.notEqual(r.code, 0, 'an injected duration was accepted');
+    assert.ok(exitedNonZero(r), describeSpawn(r, 'an injected duration was accepted'));
     assert.deepEqual(r.saved, [], 'a skill-blocked HTML was written');
     assert.match(r.stderr, /skill\(s\) not backed/);
   } finally { rmSync(root, { recursive: true, force: true }); }
