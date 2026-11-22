@@ -22,6 +22,20 @@ function makeSandbox(trackerContent) {
   const dir = mkdtempSync(join(tmpdir(), 'co-markpdf-'));
   const tracker = join(dir, 'applications.md');
   writeFileSync(tracker, trackerContent);
+  // F10: a report-number match is not proof a PDF exists. mark-pdf-ready now
+  // sets ✅ only when the PDF is indexed in data/pdf-index.tsv AND the file is
+  // still on disk, exactly like sync-pdf-flags.mjs. Seed both for every report
+  // the fixtures below mark ready, so the happy paths still exercise the write.
+  mkdirSync(join(dir, 'data'), { recursive: true });
+  mkdirSync(join(dir, 'output'), { recursive: true });
+  const indexedReports = [1, 2, 3, 9];
+  const manifest = ['# report\tpdf\thtml\tformat\tdate\tkind'];
+  for (const report of indexedReports) {
+    const pdfRel = `output/cv-${String(report).padStart(3, '0')}-acme.pdf`;
+    writeFileSync(join(dir, pdfRel), '%PDF-1.4 fixture');
+    manifest.push([report, pdfRel, `output/cv-${String(report).padStart(3, '0')}-acme.html`, 'A4', '2026-06-01', 'cv'].join('\t'));
+  }
+  writeFileSync(join(dir, 'data', 'pdf-index.tsv'), `${manifest.join('\n')}\n`);
   // Must live under tmpdir and use the career-ops lock-name prefix (see
   // trackerLockDirFor) or it's ignored — still safe, just a shared-lock risk.
   const lock = join(dir, 'career-ops-merge-tracker-test.lock');
@@ -416,6 +430,16 @@ const TRACKER_DUP_REPORT = `# Applications Tracker
     mkdirSync(roDir);
     const tracker = join(roDir, 'applications.md');
     writeFileSync(tracker, TRACKER_9);
+    // Seed a live indexed PDF before the directory is made read-only, so the
+    // F10 readiness check passes and the test still reaches the atomic write.
+    mkdirSync(join(roDir, 'data'), { recursive: true });
+    mkdirSync(join(roDir, 'output'), { recursive: true });
+    writeFileSync(join(roDir, 'output', 'cv-001-acme.pdf'), '%PDF-1.4 fixture');
+    writeFileSync(join(roDir, 'data', 'pdf-index.tsv'), [
+      '# report\tpdf\thtml\tformat\tdate\tkind',
+      ['1', 'output/cv-001-acme.pdf', 'output/cv-001-acme.html', 'A4', '2026-06-01', 'cv'].join('\t'),
+      '',
+    ].join('\n'));
     const lock = join(dir, 'career-ops-merge-tracker-wf.lock');
     // On Windows, directory read-only bits don't block file creation — deny
     // write-data/append-data for Everyone (*S-1-1-0) via icacls instead

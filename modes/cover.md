@@ -30,7 +30,7 @@ Do not generate a generic or placeholder cover letter under any circumstances.
 Read `config/profile.yml` for:
 - `candidate.name`, `email`, `phone`, `location`, `linkedin`, `github`
 - `candidate.credentials` (derive from cv.md Education + Certifications if not in profile.yml)
-- `cover_letter.notice_period_days` (default: omit if key absent)
+- `cover_letter.notice_period_days` — a **user-authored value from the user's own profile**, so it is a verified user-layer claim and safe to state in the letter when relevant (Step 5 still confirms the actual figure with the user). Never invent or estimate one; if the key is absent, omit the notice period rather than guessing.
 - `cover_letter.primary_domain` (default: infer from cv.md if absent)
 - `cover_letter.language_learning` (default: empty list if absent)
 
@@ -146,8 +146,8 @@ The JD is in {JD domain} — your background is in {primary_domain}.
   c) Tell me your angle and I'll write it your way
 
 [Gap: immediate start]
-The JD asks for an immediate start. Your profile shows a {notice_period_days}-day notice period.
-→ Confirm your actual notice period — I'll state it precisely.
+The JD asks for an immediate start. Your profile shows a {notice_period_days}-day notice period (from `config/profile.yml` → `cover_letter.notice_period_days`, a user-authored claim safe to state).
+→ Confirm your actual notice period — I'll state the confirmed figure precisely, and never invent one if the profile has no value.
 
 [Gap: language requirement]
 The JD requires {language} at {level}. Where are you with {language}?
@@ -262,7 +262,7 @@ End the draft with: "How does this read? Once you approve I'll generate the PDF.
 
 ## Language rules (enforced in every sentence)
 
-**Output language follows the posting, not the global default.** For a French posting (JD in French, or a French hiring entity with a French JD), write the entire letter in French — unless the posting explicitly requires English fluency or states that English is a must. The candidate's French is Fluent, so a French cover letter is expected and preferred by French recruiters. The same rule applies to German postings (candidate's German is Basic — confirm before generating in German). See `_shared.md` → "Language for the posting (per-JD, overrides the global `language.output`)".
+**Output language follows `language.output`, never the posting.** Write the entire letter in `language.output` from `config/profile.yml` (English when unset), whatever language the posting or JD is written in. The JD language and `language.modes_dir` may supply market vocabulary only; they never change the output language. **Write all human-facing output in `{language.output}` regardless of the language of these instructions or the job description.** Do not assert any language-fluency level unless `cv.md`, `config/profile.yml`, `modes/_profile.md`, or `article-digest.md` states it, or the user says it in this conversation; if none claims a level, do not assert one. See `_shared.md` → "Output language (`language.output` is authoritative)".
 
 `_writing.md` → Professional Writing & ATS Compatibility is the base: its cliché
 list, em-dash rule, sentence variation and specifics-over-abstractions guidance
@@ -307,7 +307,7 @@ states it as a plan, as in "I will read the last 6 months of incident reviews".
 It never supports an employer, a title, a tool, or past experience. "I have 6
 months of incident-response experience" still needs `cv.md` or
 `article-digest.md`, whatever the answers say. A number that is in none of
-`cv.md`, `article-digest.md`, and `user_inputs` still blocks the PDF. Do not rewrite the candidate's wording to get past the gate, and do not
+`cv.md`, `article-digest.md`, `config/profile.yml` (for `cover_letter.notice_period_days`), and `user_inputs` still blocks the PDF. A notice-period value from the user's own profile is a user-authored claim and is safe to state; if the key is absent, omit it rather than inventing one. Do not rewrite the candidate's wording to get past the gate, and do not
 add a plan to cv.md to make the gate pass. Career evidence belongs in `cv.md`
 or `article-digest.md`. A verified exception belongs in `config/cv-facts.json`.
 

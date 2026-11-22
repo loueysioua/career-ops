@@ -27,11 +27,16 @@ import { fileURLToPath } from 'node:url';
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const tmp = () => mkdtempSync(join(tmpdir(), 'cv-dollar-'));
 
+// The builders run their source-backed fact gate when they find a cv.md in the
+// resolved data root. These fixtures are deliberately fake ("Test Corp"), so
+// pin an empty data root derived from the fixture directory: the gate skips
+// (no cv.md) and the template-splice regression is actually exercised.
 const run = (script, payload, out) =>
   execFileSync(process.execPath, [join(ROOT, script), payload, out], {
     cwd: ROOT,
     encoding: 'utf-8',
     maxBuffer: 10 * 1024 * 1024,
+    env: { ...process.env, CAREER_OPS_ROOT: dirname(payload), CAREER_OPS_DATA_DIR: '', CAREER_OPS_PROFILE: '' },
   });
 
 test("build-cv-latex: a $' in a bullet does not splice the template", () => {

@@ -4,7 +4,6 @@ import { readFile, writeFile, stat } from 'fs/promises';
 import { existsSync, realpathSync } from 'fs';
 import { resolve, dirname, basename, join } from 'path';
 import { fileURLToPath } from 'url';
-import { tmpdir } from 'os';
 import { escapeLatex, sanitizeUrl } from './lib/latex-escape.mjs';
 import { resolveTemplate } from './cv-templates.mjs';
 import { stripEmptySections } from './cv-sections-core.mjs';
@@ -13,6 +12,8 @@ import { latexPayloadFactHtml } from './lib/cv-payload-facts.mjs';
 import { resolvePageFormat } from './lib/page-format.mjs';
 import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
 import { cvSourcePaths } from './lib/cv-sources.mjs';
+import { validateLatexLockedSections, latexSectionKey, createSecureTempFile } from './lib/latex-content.mjs';
+import { readLockedSections } from './theme-style.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_PATH = resolve(__dirname, 'templates', 'cv-template.tex');
@@ -228,16 +229,21 @@ async function main() {
   // understands. Arbitrary TeX and custom templates keep the compiler's final
   // text gate; their macro semantics cannot be inferred from a JSON key.
   let factCheck = { verdict: 'skipped', reason: 'structured fact gate supports bundled LaTeX templates only' };
+  const root = getCareerOpsRoot();
+  // F7: probe EVERY CV source, not just a bare cv.md. cvs/*, CAREER_OPS_CV
+  // and cv.sources are first-class evidence (generate-latex.mjs already uses
+  // resolveCvSources for exactly this probe). Skipping when only those exist
+  // left awards/projects/invented employers completely ungated.
+  const cvPaths = cvSourcePaths(root, { profilePath: getProfilePath() });
   const bundledTemplates = [TEMPLATE_PATH, resolve(__dirname, 'templates', 'cv-template.cjk.tex')];
   if (bundledTemplates.includes(resolve(TEMPLATE_PATH_RESOLVED))) {
-    const root = getCareerOpsRoot();
-    if (!existsSync(join(root, 'cv.md'))) {
-      factCheck = { verdict: 'skipped', reason: `no cv.md in ${root}` };
+    if (!cvPaths.length) {
+      factCheck = { verdict: 'skipped', reason: `no cv.md or other CV sources in ${root}` };
     } else {
       const { assertFacts, printFactWarnings } = await import('./verify-cv-facts.mjs');
       try {
         const result = assertFacts(latexPayloadFactHtml(payload, template), {
-          sourcePaths: [...cvSourcePaths(root), join(root, 'article-digest.md')],
+          sourcePaths: [...cvPaths, join(root, 'article-digest.md')],
           configPath: join(root, 'config', 'cv-facts.json'), label: basename(absOutput),
         });
         factCheck = { verdict: result.verdict, configMissing: result.configMissing };
@@ -297,6 +303,23 @@ async function main() {
   const unresolved = template.match(PLACEHOLDER_RE);
   if (unresolved) {
     console.error(`Unresolved placeholders: ${[...new Set(unresolved)].join(', ')}`);
+    process.exit(1);
+  }
+
+  // P13: locked sections are verbatim. The HTML path enforces
+  // cv.locked_sections before printing; do the same here, on the document that
+  // will actually be compiled, before any .tex is written.
+  try {
+    const payloadLocked = Array.isArray(payload.locked_sections)
+      ? payload.locked_sections.map(latexSectionKey) : [];
+    const lockedKeys = [...new Set([...readLockedSections(getProfilePath(), latexSectionKey), ...payloadLocked])];
+    if (lockedKeys.length && cvPaths.length) {
+      validateLatexLockedSections(template, await readFile(cvPaths[0], 'utf-8'), lockedKeys);
+    }
+  } catch (err) {
+    console.error(err.message);
+    console.log(JSON.stringify({ valid: false, errors: [err.message], warnings,
+      factCheck: { verdict: 'block', reason: err.message } }, null, 2));
     process.exit(1);
   }
 
@@ -534,10 +557,14 @@ async function runSelfTest() {
     process.exit(1);
   }
 
-  const testOutput = join(tmpdir(), 'build-cv-latex-test.tex');
-  const raw = JSON.stringify(sample, null, 2);
-  const tmpInput = join(tmpdir(), 'build-cv-latex-test-input.json');
-  await writeFile(tmpInput, raw, 'utf-8');
+  // P14: the self-test used predictable world-readable /tmp paths. Use a
+  // fresh 0700 dir with a random 0600 file instead; no candidate/company name
+  // is ever part of the path.
+  const secure = createSecureTempFile({
+    prefix: 'career-ops-latex-selftest-', suffix: '.json', contents: JSON.stringify(sample, null, 2),
+  });
+  const tmpInput = secure.path;
+  const testOutput = join(secure.dir, 'cv.tex');
 
   const absInput = resolve(tmpInput);
   const absOutput = resolve(testOutput);
@@ -558,6 +585,9 @@ async function runSelfTest() {
 
   const substitutions = {
     NAME: escapeLatex(sample.name),
+    PAPER: resolvePageFormat(sample.page_format, {
+      profilePath: getProfilePath(), country: sample.country,
+    }) === 'a4' ? 'a4paper' : 'letterpaper',
     CONTACT_LINE: escapeLatex(sample.contact_line),
     EMAIL_URL: emailUrl,
     EMAIL_DISPLAY: escapeLatex(emailDisplay),
@@ -615,12 +645,7 @@ async function runSelfTest() {
 
   console.log(JSON.stringify(report, null, 2));
 
-  await import('fs/promises').then(fs =>
-    Promise.all([
-      fs.rm(tmpInput).catch(() => {}),
-      fs.rm(testOutput).catch(() => {}),
-    ])
-  );
+  secure.cleanup();
 
   process.exit(0);
 }

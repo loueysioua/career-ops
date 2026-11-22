@@ -166,6 +166,23 @@ export function getProfilePath(rootDir) {
 }
 
 /**
+ * Profile path for readers that must honour `CAREER_OPS_PROFILE` even when
+ * they have an explicit data root. `getProfilePath(rootDir)` deliberately
+ * ignores the override when a root is passed (doctor --target relies on
+ * that), but a CV-source resolver reading the user's *active* profile must not
+ * fall back to a different one. Keep the env read here, in the resolver, so
+ * no other module builds its own profile path.
+ *
+ * @param {string} rootDir The data root
+ * @param {NodeJS.ProcessEnv} [env] Environment to read the override from
+ * @returns {string} Absolute profile path
+ */
+export function getProfilePathFromEnvOrRoot(rootDir, env = process.env) {
+  const override = env.CAREER_OPS_PROFILE?.trim();
+  return override ? resolve(override) : getProfilePath(rootDir);
+}
+
+/**
  * Canonicalize a tracker path: absolute + realpath (macOS's symlinked tmpdir
  * among others). This must be applied by EVERY resolver of the same tracker:
  * two implementations briefly coexisted, the un-canonicalized one derived

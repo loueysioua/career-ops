@@ -111,7 +111,7 @@ If the final score is >= 4.5, generate a draft of responses for the application 
 
 ## Step 5 — Update Tracker
 
-Record it in the tracker the way `oferta` does ("Record in tracker"): a tracker-addition TSV merged by `node merge-tracker.mjs`, never a row written into `data/applications.md` by hand. Fill every field, including the Report link and PDF as ✅.
+Record it in the tracker the way `oferta` does ("Record in tracker"): a tracker-addition TSV merged by `node merge-tracker.mjs`, never a row written into `data/applications.md` by hand. Fill every field, including the Report link. Mark PDF ✅ only when a PDF artifact was actually generated. For `cv.output_format: text` or `latex` (Step 3 routes these to paths that produce no PDF), or whenever no PDF artifact exists — including an artifact-generation failure — mark PDF ❌, matching `modes/pipeline.md` → "Choosing the CV output". Never mark a nonexistent PDF as ✅: the PDF column points consumers (`find.mjs`, the dashboard, `email` mode) at a real file.
 
 **If an artifact-generation step fails after the JD and gates are resolved**, continue with the next ones and mark the failed step as pending in the tracker. An unavailable JD or unresolved liveness/confirmation gate stops the pipeline before evaluation and all artifact/tracker writes.
 

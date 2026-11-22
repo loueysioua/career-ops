@@ -2064,12 +2064,18 @@ node mark-pdf-ready.mjs <report#> --json          # emit machine-readable output
 ```
 
 The script resolves the report-to-row link, refuses ambiguous matches, and
-leaves an already-ready row unchanged. Writes use the same shared tracker lock
-and atomic replacement as `set-status.mjs`, so concurrent tracker updates do
-not overwrite one another. Exit status `0` covers a successful mark and an
-idempotent no-op; `1` is a usage, column, or write error; `2` means the tracker
-or report row was not found; `3` means the report matched more than one row;
-and `4` means the tracker lock timed out and the operation should be retried.
+leaves an already-ready row unchanged. A report-number match is not proof a PDF
+exists: before setting ✅ the script applies the same check as
+`sync-pdf-flags.mjs` — the PDF must be indexed in `data/pdf-index.tsv` and still
+present on disk inside the workspace. If it is not, the cell is left alone and
+the script fails closed. Writes use the same shared tracker lock and atomic
+replacement as `set-status.mjs`, so concurrent tracker updates do not overwrite
+one another. Exit status `0` covers a successful mark and an idempotent no-op;
+`1` is a usage, column, or write error; `2` means the tracker or report row was
+not found; `3` means the report matched more than one row; `4` means the tracker
+lock timed out and the operation should be retried; and `5` (`pdf-not-ready` /
+`pdf-index-unreadable`) means no live indexed PDF backs the report — nothing was
+written.
 
 ---
 

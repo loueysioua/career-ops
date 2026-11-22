@@ -4,7 +4,7 @@ Export a tailored, ATS-optimized CV as a `.tex` file and compile it to PDF via `
 
 ## Pipeline
 
-**Locked Sections:** If `cv.locked_sections` is defined in `profile.yml`, NEVER remove, shorten, or paraphrase those sections during CV generation or tailoring. They must appear verbatim. (Note: Programmatic validation of locked sections is enforced in the HTML/PDF pipeline; it is not yet covered in the LaTeX pipeline.)
+**Locked Sections:** If `cv.locked_sections` is defined in `profile.yml`, NEVER remove, shorten, paraphrase, or **reorder** those sections during CV generation or tailoring. They must appear verbatim, in their original position. Locked sections **are** enforced on the LaTeX path too: `build-cv-latex.mjs` / `generate-latex.mjs` validate them and block a document that edits or moves one, so skip them entirely during bullet selection (Step 9) and keyword injection.
 
 1. Read `cv.md` as source of truth
 2. Read `config/profile.yml` for candidate identity and contact info
@@ -17,12 +17,12 @@ Export a tailored, ATS-optimized CV as a `.tex` file and compile it to PDF via `
 8. Select top 3-4 most relevant projects for the offer, and populate `awards[]` from `cv.md`'s Awards / Honors section when it has entries that support the role (omit the key otherwise — the section is dropped, header included; never invent an award)
 9. Reorder experience bullets by JD relevance
 10. Inject keywords naturally into existing achievements
-11. Build a JSON payload (see schema below) and write to `/tmp/cv-{candidate}-{company}.json` — if a report number is already assigned for this run (auto-pipeline, batch, or any parallel fan-out per AGENTS.md "Parallel fan-outs"), include it: `/tmp/cv-{candidate}-{report}-{company}.json`. Two parallel agents handling the same company on the same day otherwise write the *same* temp path and can silently read each other's JSON.
-12. Run: `node build-cv-latex.mjs /tmp/cv-{candidate}[-{report}]-{company}.json output/cv-{candidate}-{report}-{company}-{YYYY-MM-DD}.tex`
+11. Build a JSON payload (see schema below) and write it to a **secure temporary file** (`{payload-json}`): use a fresh private directory (`0700`) with a random filename and the file mode `0600` (owner-only) — the repo's `createSecureTempFile` helper in `lib/latex-content.mjs` does this and opens with `O_EXCL | O_NOFOLLOW`, so a pre-existing symlink is refused rather than followed; a shell `mktemp` file set to `0600` is equivalent, but must not follow an existing link. **Never write to a fixed, world-readable path such as `/tmp/cv-{candidate}-{company}.json` or `/tmp/cv-{candidate}-{report}-{company}.json`** — a predictable name in a world-writable `/tmp` can be pre-created as a symlink by another local user, who would then receive the CV payload or redirect the write. Keep the exact `{payload-json}` path returned for the build step below; each run gets its own, so parallel agents cannot read each other's JSON.
+12. Run: `node build-cv-latex.mjs {payload-json} output/cv-{candidate}-{report}-{company}-{YYYY-MM-DD}.tex`
 13. Run: `node generate-latex.mjs output/cv-{candidate}-{report}-{company}-{YYYY-MM-DD}.tex output/cv-{candidate}-{report}-{company}-{YYYY-MM-DD}.pdf`
     *(Replace `{candidate}`, `{company}`, `{report}`, `{YYYY-MM-DD}` with actual values. Omit the `-{report}` segment only for a standalone one-off run with no report number at all.)*
     - This runs the CV fact gate (`verify-cv-facts.mjs`) on the `.tex` before compiling, the same hard gate `pdf` mode runs in step 19. A blocked document is not compiled, and the JSON report carries `factCheck.verdict: "block"` with the claims it could not find in `cv.md` / `article-digest.md`.
-    - If it blocks, stop and fix the step 11 payload (remove the invented claim, or add verified evidence to `cv.md`, `article-digest.md` or `config/cv-facts.json`), rebuild the `.tex`, and re-run. Never pass `--skip-fact-check` unless the user explicitly asks for it.
+    - If it blocks, **surface the finding to the user**, stop, and fix the step 11 payload by removing the invented claim. **Do not write to `cv.md`, `article-digest.md`, `config/cv-facts.json`, or any other source file yourself to satisfy the gate** — source files change only through the user-layer workflows (`add`, `expand`, `intake`) with the user's explicit confirmation and provenance, and no metric may be invented to unblock a gate. Rebuild the `.tex` and re-run. Never pass `--skip-fact-check` unless the user explicitly asks for it.
     - A `drift` finding means a bullet opens a clause with a verb its source bullet does not use. Restore the source verb; ask the user before declaring a swap in `allow_swaps`, never add one to get past the gate.
 14. Report: .tex path, .pdf path, file sizes, section count, keyword coverage %
 

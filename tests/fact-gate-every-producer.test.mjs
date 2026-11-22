@@ -174,12 +174,12 @@ test('generate-latex names a --source file that does not exist', (t) => {
   const result = runLatex(root, 'output/cv.tex', '--compile-only', '--source', 'no-such.tex');
   assert.equal(result.status, 1, describeSpawn(result));
   assert.equal(result.report?.factCheck?.verdict, 'block', result.stdout + result.stderr);
-  assert.match(result.report.factCheck.reason, /--source file not found: .*no-such\.tex/);
+  assert.match(result.report.factCheck.reason, /--source file not found.*no-such\.tex/);
   assert.equal(result.report.compileError, undefined, 'compilation was attempted after a missing --source');
   assert.equal(result.report.engine, undefined, 'compilation was attempted after a missing --source');
 });
 
-test('generate-latex --skip-fact-check and a missing cv.md skip the gate', (t) => {
+test('generate-latex refuses --skip-fact-check headlessly; a missing cv.md still skips the gate', (t) => {
   const root = workspace();
   const bare = workspace({ withCv: false });
   t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(bare, { recursive: true, force: true }); });
@@ -187,8 +187,13 @@ test('generate-latex --skip-fact-check and a missing cv.md skip the gate', (t) =
   writeFileSync(join(root, 'output', 'cv.tex'), inflated);
   writeFileSync(join(bare, 'output', 'cv.tex'), inflated);
 
+  // P12: removing the only safety net is refused in an unattended/headless
+  // run. This suite spawns generate-latex with piped stdio, so it is headless
+  // by definition. (An interactive run warns loudly and skips instead.)
   const skipped = runLatex(root, 'output/cv.tex', '--skip-fact-check');
-  assert.deepEqual(skipped.report?.factCheck, { verdict: 'skipped', reason: '--skip-fact-check' });
+  assert.equal(skipped.status, 1, describeSpawn(skipped));
+  assert.match(skipped.stderr, /Refusing --skip-fact-check in an unattended\/CI\/headless context/);
+  assert.equal(skipped.report, null);
 
   const noCv = runLatex(bare, 'output/cv.tex');
   assert.equal(noCv.report?.factCheck?.verdict, 'skipped', noCv.stdout + noCv.stderr);

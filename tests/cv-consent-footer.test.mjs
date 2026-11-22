@@ -52,6 +52,10 @@ const PAYLOAD = {
 };
 
 const dir = mkdtempSync(join(tmpdir(), 'cv-consent-footer-'));
+// Keep this suite's data path private: other suites run in parallel and share
+// the helpers' sandbox root, so a writer there (e.g. data/pdf-index.tsv) must
+// not affect the builders this suite invokes.
+const childEnv = { ...process.env, CAREER_OPS_ROOT: dir, CAREER_OPS_DATA_DIR: '', CAREER_OPS_PROFILE: '' };
 const inputWith = join(dir, 'payload-with.json');
 const inputWithout = join(dir, 'payload-without.json');
 const inputBlank = join(dir, 'payload-blank.json');
@@ -81,7 +85,7 @@ for (const { file, label } of TEMPLATES) {
   // (b) Rendering WITH consent escapes the text and emits it inside the div.
   const outputWith = join(dir, `${label}-with.html`);
   try {
-    execFileSync(NODE, ['build-cv-html.mjs', inputWith, outputWith, path], { cwd: ROOT, encoding: 'utf-8' });
+    execFileSync(NODE, ['build-cv-html.mjs', inputWith, outputWith, path], { cwd: ROOT, encoding: 'utf-8', env: childEnv });
     const rendered = readFileSync(outputWith, 'utf-8');
     if (rendered.includes('cv-consent')) pass(`${label}: rendered output contains the cv-consent div`);
     else fail(`${label}: rendered output is missing the cv-consent div`);
@@ -94,7 +98,7 @@ for (const { file, label } of TEMPLATES) {
     const xssInput = join(dir, `${label}-xss.json`);
     writeFileSync(xssInput, xssPayload);
     const xssOutput = join(dir, `${label}-xss.html`);
-    execFileSync(NODE, ['build-cv-html.mjs', xssInput, xssOutput, path], { cwd: ROOT, encoding: 'utf-8' });
+    execFileSync(NODE, ['build-cv-html.mjs', xssInput, xssOutput, path], { cwd: ROOT, encoding: 'utf-8', env: childEnv });
     const xssRendered = readFileSync(xssOutput, 'utf-8');
     if (
       xssRendered.includes('&lt;script&gt;alert(1)&lt;/script&gt;') &&
@@ -110,7 +114,7 @@ for (const { file, label } of TEMPLATES) {
   // (so the CSS can target it) but must NOT contain any consent text.
   const outputWithout = join(dir, `${label}-without.html`);
   try {
-    execFileSync(NODE, ['build-cv-html.mjs', inputWithout, outputWithout, path], { cwd: ROOT, encoding: 'utf-8' });
+    execFileSync(NODE, ['build-cv-html.mjs', inputWithout, outputWithout, path], { cwd: ROOT, encoding: 'utf-8', env: childEnv });
     const rendered = readFileSync(outputWithout, 'utf-8');
     if (/<div class="cv-consent"><\/div>/.test(rendered)) {
       pass(`${label}: empty consent renders as <div class="cv-consent"></div> (CSS hides it)`);
@@ -129,7 +133,7 @@ for (const { file, label } of TEMPLATES) {
   // leaving a bordered footer with no text.
   const outputBlank = join(dir, `${label}-blank.html`);
   try {
-    execFileSync(NODE, ['build-cv-html.mjs', inputBlank, outputBlank, path], { cwd: ROOT, encoding: 'utf-8' });
+    execFileSync(NODE, ['build-cv-html.mjs', inputBlank, outputBlank, path], { cwd: ROOT, encoding: 'utf-8', env: childEnv });
     const rendered = readFileSync(outputBlank, 'utf-8');
     if (/<div class="cv-consent"><\/div>/.test(rendered)) {
       pass(`${label}: blank-after-trim consent renders as an empty div (:empty hides it)`);

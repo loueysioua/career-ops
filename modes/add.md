@@ -32,8 +32,13 @@ If no source was given, ask the user for one.
 1. **Load context.** Read `cv.md` (its existing section names and formatting are
    the template to match), every other CV in `{DATA_ROOT}/cvs/` (for facts
    `cv.md` omits — a role or achievement that appears only there is still the
-   candidate's, and the entry may already exist there, so check before
-   proposing it), and `article-digest.md` if present.
+   candidate's), and `article-digest.md` if present. `add-entry.mjs` dedups
+   against the whole CV set, not just `cv.md`: an entry already present in any
+   `cvs/*` file (or a `cv.sources` path) is a duplicate and comes back
+   `duplicate` without a second insertion into `cv.md`. The helper resolves and
+   reads those files itself (using the same CV-source resolver as the fact
+   gates, and honouring the data-root override), so no extra payload field is
+   needed.
 2. **Fetch the source (zero-key):**
    - **GitHub repo** → the public REST API (`https://api.github.com/repos/<owner>/<repo>`
      for name/description/topics/language/stars/timestamps) **plus** the README
@@ -109,6 +114,10 @@ that's already there, so the command is idempotent.
 - Match the existing `cv.md` formatting exactly (heading levels, bullet style,
   date format) — the file is the template.
 - One entry per run. To add several, run `add` per item.
+- Dedup covers the whole CV set: `add-entry.mjs` checks `cvs/*` and `cv.sources`
+  as well as `cv.md`, so an entry that already exists in an additional CV comes
+  back `duplicate` and is never inserted into the baseline again. Still read
+  those files in Step 1 for facts `cv.md` omits.
 - If the fetch fails or the page has no usable content, say so and stop — never
   synthesize an entry from nothing.
 - Personal data (the CV itself) stays local; the fetch only reads public sources.

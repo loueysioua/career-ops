@@ -52,9 +52,10 @@
  * (`#5348`), a missing config/cv-facts.json — so a careful caller may still
  * want them to stop a render instead of scrolling past them. The warnings are
  * printed exactly as they are without the flag; only the exit changes. It does
- * not make the gate RUN: --skip-fact-check, or a workspace with no cv.md, still
- * means no gate, and combining the two is rejected rather than silently
- * honouring one over the other. A `block` verdict already fails without it.
+ * not make the gate RUN: --skip-fact-check, or a workspace with no CV sources
+ * (cv.md / cvs/* / CAREER_OPS_CV / cv.sources), still means no gate, and
+ * combining the two is rejected rather than silently honouring one over the
+ * other. A `block` verdict already fails without it.
  *
  * Requires: @playwright/test (or playwright) installed.
  * Uses Chromium headless to render the HTML and produce a clean, ATS-parseable PDF.
@@ -1762,7 +1763,9 @@ async function updatePDFManifest(reportNum, pdfPath, htmlPath, format, kind) {
  * was the path with no gate at all.
  *
  * Callers pass the normalized HTML and the HTML from before ATS normalization.
- * They skip the call when --skip-fact-check is set or the workspace has no cv.md.
+ * They skip the call when --skip-fact-check is set or the workspace has no CV
+ * sources at all — the decision uses the same resolveCvSources() set the gate
+ * itself reads, so a cvs/master.md-only workspace is gated rather than skipped.
  *
  * @param {string} html - Normalized HTML, as it will be printed.
  * @param {string} label - Document name for the error and warning lines.
@@ -1777,17 +1780,27 @@ async function runFactGate(html, label, rawHtml = html, { strictFactCheck = fals
   // generate-pdf.mjs alone into a temp workspace — a static import of a sibling
   // that isn't copied made every one of those suites die with
   // ERR_MODULE_NOT_FOUND before reaching the behaviour under test. Those
-  // fixtures also ship no cv.md, so the gate is never entered there. If the
+  // fixtures also ship no CV sources, so the gate is never entered there. If the
   // module is genuinely missing in a real workspace this throws and the render
   // fails, which is the correct direction to fail for a fact gate.
-  const { assertFacts, printFactWarnings } = await import('./verify-cv-facts.mjs');
+  const { assertFacts, printFactWarnings, stripMarkup } = await import('./verify-cv-facts.mjs');
   const { voiceIssues, voiceTellMessage, voiceDashWarning, candidateOwnWords } = await import('./cv-voice.mjs');
   const inputs = factGateInputs();
-  // The voice check allows wording the CV, voice-dna.md, and the cv-facts
-  // allow lists already have. article-digest.md backs facts, not phrasing.
-  const cvPath = resolve(workspaceRoot, 'cv.md');
-  const source = existsSync(cvPath) ? readFileSync(cvPath, 'utf-8') : '';
-  const found = voiceIssues(rawHtml, `${source}\n${candidateOwnWords(workspaceRoot)}`);
+  // The voice check allows wording the candidate actually wrote, in ANY of
+  // their CV sources, plus voice-dna.md and the cv-facts allow lists. Reading
+  // only cv.md here made a phrase legitimately present in cvs/master.md fail
+  // as a blocking "banned phrase" while assertFacts (which reads every source)
+  // accepted the same document. article-digest.md backs facts, not phrasing.
+  // Strip markup per file before joining: a .tex CV's \begin{document} would
+  // otherwise make stripMarkup() drop every line that came before it — the
+  // same reason generate-latex.mjs strips each source on its own.
+  let voiceSource = '';
+  for (const sourcePath of inputs.cvPaths) {
+    const source = await readFile(sourcePath, 'utf-8');
+    voiceSource += `\n${stripMarkup(source, { keepLineBreaks: true })}`;
+  }
+  voiceSource += `\n${candidateOwnWords(workspaceRoot)}`;
+  const found = voiceIssues(rawHtml, voiceSource);
   const voiceError = voiceTellMessage(found, label);
   if (voiceError) throw new Error(voiceError);
   const dashWarning = voiceDashWarning(found, label);
@@ -1812,27 +1825,39 @@ async function runFactGate(html, label, rawHtml = html, { strictFactCheck = fals
 }
 
 /**
- * The files the fact gate checks a CV against, from the same workspace this
- * render reads cv.md and the profile from.
+ * The CV set the fact gate uses, from the same workspace this render reads
+ * cv.md and the profile from. One resolution shared by the run/skip decision,
+ * the voice check and assertFacts, so they cannot disagree about which CVs
+ * exist (F5/F11).
  *
  * verify-cv-facts defaults to the DATA root's cv.md, article-digest.md and
- * config/cv-facts.json. This module reads cv.md (the probe that decides
- * whether the gate runs, and the section-order and locked-section guards) and
- * config/profile.yml from workspaceRoot, which is a different directory
- * whenever CAREER_OPS_TRACKER points outside the data root (#2471, #3169). With
- * the defaults one render read two cv.md files: the guards and the run-or-skip
- * decision used the workspace's, the fact check the data root's, so a number
- * absent from the CV this render validated could still pass.
+ * config/cv-facts.json. This module reads its CVs and config/profile.yml from
+ * workspaceRoot, which is a different directory whenever CAREER_OPS_TRACKER
+ * points outside the data root (#2471, #3169). With the defaults one render
+ * read two cv.md files: the guards and the run-or-skip decision used the
+ * workspace's, the fact check the data root's, so a number absent from the CV
+ * this render validated could still pass.
  *
- * @returns {{sourcePaths: string[], configPath: string}}
+ * @returns {ReturnType<typeof resolveCvSources>}
+ */
+function factGateSources() {
+  return resolveCvSources(workspaceRoot, { profilePath: workspaceProfilePath() });
+}
+
+/**
+ * Paths handed to assertFacts, plus the CV-only subset the voice check reads.
+ *
+ * @returns {{cvPaths: string[], sourcePaths: string[], configPath: string}}
  */
 function factGateInputs() {
   // Every CV in the workspace, not just the baseline cv.md: a claim the
   // baseline omits but an additional CV holds is still the user's claim, and
   // the gate blocked it before (lib/cv-sources.mjs).
-  const sources = resolveCvSources(workspaceRoot, { profilePath: workspaceProfilePath() });
+  const cvPaths = factGateSources().all.map((entry) => entry.path);
   return {
-    sourcePaths: [...sources.all.map((entry) => entry.path), resolve(workspaceRoot, 'article-digest.md')],
+    // The voice check reads only these — article-digest.md backs facts, not phrasing.
+    cvPaths,
+    sourcePaths: [...cvPaths, resolve(workspaceRoot, 'article-digest.md')],
     configPath: resolve(workspaceRoot, 'config', 'cv-facts.json'),
   };
 }
@@ -1840,10 +1865,12 @@ function factGateInputs() {
 /**
  * Say that the fact gate did not run, rather than letting a render with no
  * "Fact check" line read like one that passed. `--skip-fact-check` is the
- * explicit opt-out and stays quiet.
+ * explicit opt-out and stays quiet. Reached only when there are genuinely no
+ * CV sources, so the wording names the baseline path and the other places a
+ * CV could have lived — it never claims a gate ran or passed.
  */
 function warnFactGateNotRun() {
-  console.warn(`⚠️  Fact check did not run: no cv.md at ${resolve(workspaceRoot, 'cv.md')} — this CV was not checked against your sources.`);
+  console.warn(`⚠️  Fact check did not run: no cv.md at ${resolve(workspaceRoot, 'cv.md')} and no other CV sources (cvs/*, CAREER_OPS_CV or cv.sources in config/profile.yml) — this CV was not checked against your sources.`);
 }
 
 /**
@@ -2126,8 +2153,13 @@ async function generatePDF() {
   reportAtsReplacements(normalized.replacements);
 
   // Fact gate, on the normalized HTML: the document that actually prints.
+  // cvMarkdown above is only the baseline used by the section-order and
+  // locked-section guards. Whether the gate runs is decided by the same full
+  // source set the gate reads (F11): no cv.md but a cvs/master.md (or a
+  // CAREER_OPS_CV / cv.sources file) is still a gated render, not a silent skip.
+  const gateHasSources = factGateSources().all.length > 0;
   if (!skipFactCheck) {
-    if (cvMarkdown) await runFactGate(html, basename(inputPath), rawHtml, { strictFactCheck });
+    if (gateHasSources) await runFactGate(html, basename(inputPath), rawHtml, { strictFactCheck });
     else warnFactGateNotRun();
   }
 
@@ -2249,8 +2281,10 @@ async function runBatchFromManifest(manifestPath, globals) {
   } catch (err) {
     if (err?.code !== 'ENOENT') throw err;
   }
-  // Once for the batch, not once per entry.
-  if (!globals.skipFactCheck && !cvMarkdown) warnFactGateNotRun();
+  // Once for the batch, not once per entry. Same source set as the gate itself
+  // (F11): a cvs/*-only workspace is gated rather than reported as unchecked.
+  const gateHasSources = factGateSources().all.length > 0;
+  if (!globals.skipFactCheck && !gateHasSources) warnFactGateNotRun();
   // Read one workspace profile for the batch. The working directory must not
   // choose a different theme from the single-document render.
   const profilePath = workspaceProfilePath();
@@ -2327,7 +2361,7 @@ async function runBatchFromManifest(manifestPath, globals) {
       // Same gate, same guard and same place as the single render. A blocked
       // entry throws into the catch below: it is recorded as failed and never
       // reaches Chromium, and the rest of the batch still renders.
-      if (!globals.skipFactCheck && cvMarkdown) await runFactGate(html, basename(entryInput), rawHtml, { strictFactCheck: globals.strictFactCheck === true });
+      if (!globals.skipFactCheck && gateHasSources) await runFactGate(html, basename(entryInput), rawHtml, { strictFactCheck: globals.strictFactCheck === true });
       const entryBudget = pageBudgetFor(resolveArtifactKind(entryKind, entryOutput).kind, globals.flagBudget, globals.profileBudget);
 
       entries.push({

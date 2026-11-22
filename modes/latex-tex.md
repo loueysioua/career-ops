@@ -34,10 +34,10 @@ latex:
 
 ## Pipeline
 
-**Locked Sections:** If `cv.locked_sections` is defined in `profile.yml`, NEVER remove, shorten, or paraphrase those sections during CV generation or tailoring. They must appear verbatim. (Note: Programmatic validation of locked sections is enforced in the HTML/PDF pipeline; it is not yet covered in the LaTeX pipeline.)
+**Locked Sections:** If `cv.locked_sections` is defined in `profile.yml`, NEVER remove, shorten, paraphrase, or **reorder** those sections during CV generation or tailoring. They must appear verbatim, in their original position. Locked sections **are** enforced on the LaTeX path too: locked prose is never rewritten or reordered during tailoring (Step 5), and the fact/structure validation on this path blocks a patched `.tex` that edits or moves it.
 
 1. Resolve source `.tex` path (see above)
-2. Run: `node extract-latex-content.mjs <source.tex> --out /tmp/cv-slots-{company}.json`
+2. Create a **secure temporary file** for the extraction manifest (`{slots-json}`): a fresh private directory (`0700`) with a random filename and the file mode `0600` (owner-only), opened without following an existing link — the repo's `createSecureTempFile` helper in `lib/latex-content.mjs` does this (`O_EXCL | O_NOFOLLOW`); a `mktemp` file set to `0600` is equivalent. **Never write to a fixed, world-readable path such as `/tmp/cv-slots-{company}.json`** — a predictable name in world-writable `/tmp` can be pre-created as a symlink by another local user. Then run: `node extract-latex-content.mjs <source.tex> --out {slots-json}`
 3. If `supported: false` → show `error` + `hint`; do not proceed
 4. Read JD (from context, report, or ask user)
 5. Tailor **only** the `slots[].text` values for JD fit (same ethics as `modes/latex.md` / `pdf`):
@@ -45,7 +45,7 @@ latex:
    - Reorder bullets by relevance (reorder patch list order if needed; patch ids stay stable)
    - Inject keywords into existing achievements — **NEVER invent skills**
    - If `cv.md` exists, cross-check claims against it; omit anything not backed by in-scope sources
-6. Write patches file:
+6. Write patches file to a **secure temporary file** (`{patches-json}` — fresh `0700` dir, random name, file mode `0600`, no symlink following, e.g. via `createSecureTempFile`; never a fixed `/tmp/cv-patches-{company}.json` path with its symlink-exposure risk):
 
 ```json
 {
@@ -56,7 +56,7 @@ latex:
 }
 ```
 
-7. Run: `node patch-latex-content.mjs <source.tex> /tmp/cv-patches-{company}.json output/cv-{candidate}-{company}-{YYYY-MM-DD}.tex`
+7. Run: `node patch-latex-content.mjs <source.tex> {patches-json} output/cv-{candidate}-{company}-{YYYY-MM-DD}.tex`
 8. Run: `node generate-latex.mjs output/cv-{candidate}-{company}-{YYYY-MM-DD}.tex output/cv-{candidate}-{company}-{YYYY-MM-DD}.pdf --compile-only --source <source.tex>`
    - This runs the CV fact gate on the patched `.tex` before compiling, when `cv.md` exists. `--source <source.tex>` counts the user's own hand-tuned `.tex` as evidence alongside `cv.md` and `article-digest.md`, since it is user-authored. A blocked document is not compiled; the JSON report carries `factCheck.verdict: "block"` and the unsupported claims. Fix the patch text and re-run steps 7–8. Never pass `--skip-fact-check` unless the user explicitly asks for it.
 9. Report: family, slot count, patched count, `.tex` path, `.pdf` path (or compile error)

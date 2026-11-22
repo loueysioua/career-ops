@@ -50,9 +50,10 @@
  */
 
 import { readFileSync, existsSync, realpathSync } from 'fs';
-import { join, dirname, basename } from 'path';
+import { join, dirname, basename, resolve } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
-import { getCareerOpsRoot } from './path-resolver.mjs';
+import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
+import { cvSourcePaths } from './lib/cv-sources.mjs';
 import { normalizeTextKey } from './tracker-parse.mjs';
 import { replaceUserFile, userFileWriteTarget } from './tracker-utils.mjs';
 import { acquireDirLock, releaseOrWarn } from './lib/dir-lock.mjs';
@@ -236,9 +237,11 @@ export function appendArticleDigest(md, entry) {
 /**
  * Pure core: given the current file contents and a payload, compute the new
  * contents and a per-target status. No I/O — this is what the tests exercise.
+ * `otherCvTexts` holds the additional CVs (cvs/* and cv.sources); an entry
+ * already in one of them is a duplicate even though we still write to cv.md.
  * @returns {{ cv: string, articleDigest: string, result: object }}
  */
-export function applyAdd(payload, { cvText = null, articleText = null } = {}) {
+export function applyAdd(payload, { cvText = null, articleText = null, otherCvTexts = [] } = {}) {
   if (!payload || typeof payload !== 'object' || (!payload.cv && !payload.articleDigest && !payload.articleDigestUpdate)) {
     throw new Error('payload must include at least one of: cv, articleDigest, articleDigestUpdate');
   }
@@ -254,7 +257,13 @@ export function applyAdd(payload, { cvText = null, articleText = null } = {}) {
     // rather than silently allowing duplicate re-runs.
     if (!normalizeKey(dedupKey)) throw new Error('payload.cv requires a non-empty dedupKey (used for dedup/idempotency)');
     if (cvText === null) throw new Error(`cv.md not found — cannot add to a CV that does not exist`);
-    if (cvHasEntry(cvText, section, dedupKey)) {
+    // Dedup against the whole CV set, not just the baseline: an entry that
+    // already lives in an additional CV is the user's claim and must not be
+    // inserted into cv.md a second time. The matching rule is exactly the one
+    // used for cv.md (identifier match inside the same ## section).
+    const alreadyPresent = cvHasEntry(cvText, section, dedupKey)
+      || otherCvTexts.some((text) => typeof text === 'string' && cvHasEntry(text, section, dedupKey));
+    if (alreadyPresent) {
       result.cv = { status: 'duplicate', section };
     } else {
       cv = insertIntoCvSection(cvText, section, entry);
@@ -351,10 +360,21 @@ async function main() {
     }
     const cvText = existsSync(CV_FILE) ? readFileSync(CV_FILE, 'utf-8') : null;
     const articleText = existsSync(ARTICLE_DIGEST_FILE) ? readFileSync(ARTICLE_DIGEST_FILE, 'utf-8') : null;
+    // The agent is told to check cvs/* before adding. Do it here too, using
+    // the same resolver the fact gates use, so an entry that already exists in
+    // an additional CV is never written into the baseline again. The override
+    // profile is honoured here just as it is on the PDF path.
+    const baseline = resolve(CV_FILE);
+    const otherCvTexts = payload?.cv
+      ? cvSourcePaths(CAREER_OPS, { profilePath: getProfilePath() })
+        .filter((path) => resolve(path) !== baseline)
+        .map((path) => (existsSync(path) ? readFileSync(path, 'utf-8') : null))
+        .filter(Boolean)
+      : [];
 
     let out;
     try {
-      out = applyAdd(payload, { cvText, articleText });
+      out = applyAdd(payload, { cvText, articleText, otherCvTexts });
     } catch (e) {
       console.error(`add-entry: ${e.message}`);
       process.exitCode = 1;

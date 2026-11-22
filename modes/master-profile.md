@@ -28,6 +28,21 @@ The parser is intentionally conservative and heading-based. Tell the user
 that unusual CV layouts may need manual additions/edits after import. Do not
 discard or rewrite `cv.md`.
 
+### Supported headings
+
+Heading classification matches whole keywords within a heading, not just exact
+canonical strings. Alongside the plain forms (`## Experience`, `## Work
+Experience`, `## Projects`, `## Education`, `## Skills`, `## Certifications`,
+`## Summary` and their Indonesian/French equivalents), qualified headings are
+recognised too — for example `## AI & Machine Learning Experience` classifies as
+experience and `## Academic & Personal Projects` classifies as projects. `&`,
+`/` and `-` are treated as separators, and accented variants such as
+`Expérience professionnelle`, `Compétences` and `Formation` are folded. Keywords
+are matched as whole tokens, so `Academic` alone does **not** mean Education;
+the surrounding words decide. If a heading still classifies wrongly, the
+item-by-item review gate is where the user corrects or skips it — never rewrite
+`cv.md` to make the parser happy.
+
 ## Prepare selected experience bullets (opt-in)
 
 Use this only when the user explicitly asks to prepare a CV from selected

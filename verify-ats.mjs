@@ -51,6 +51,10 @@ const TEXT_LOW_WITH_IMG = 800;   // images + this little text ⇒ text probably 
 // a truthful multilingual CV is never penalised.
 const ATS_SAFE_FONTS = new Set([
   'arial', 'helvetica', 'helvetica neue', 'liberation sans', 'dejavu sans',
+  // Arial Unicode MS (and its close spellings) is the broad-coverage fallback
+  // the shipped template declares. It is a standard, embeddable face and must
+  // not drop an otherwise clean CV below the top grade (#issue-group6).
+  'arial unicode ms', 'arial unicode', 'ms arial unicode',
   'calibri', 'candara', 'corbel', 'segoe ui', 'tahoma', 'verdana', 'trebuchet ms',
   'times new roman', 'times', 'georgia', 'cambria', 'garamond', 'book antiqua',
   'palatino', 'palatino linotype', 'lato', 'roboto', 'open sans', 'noto sans',
@@ -159,9 +163,9 @@ function stripInline(fragment) {
  * "non-standard font" — but its fallback slot can hold one (`var(--x, Georgia)`),
  * and that name has to survive or a genuinely risky font would hide behind a
  * custom property. So the reference itself is dropped and everything it wrapped
- * is kept. The custom property's *definition* (`--font-family: "Liberation
- * Sans", …`) is scanned separately: the caller's pattern is unanchored, so it
- * matches the declaration and the real faces are still checked.
+ * A custom property's *definition* (`--font-family: "Liberation Sans", …`) is
+ * NOT a used declaration and the caller's boundary-anchored pattern skips it;
+ * only real `font-family:` declarations reach this function.
  * @param {string} declaration The text after `font-family:`, up to the `;`.
  * @returns {string[]} Lowercased family names, empty entries removed.
  */
@@ -242,6 +246,41 @@ function stripNonContentRegions(html) {
 }
 
 /**
+ * The view the STRUCTURAL checks read: `<script>` bodies and HTML comments are
+ * removed, but `<style>` bodies are KEPT because the font / column / hidden-text
+ * checks need to see the declarations a browser actually applies.
+ *
+ * This is the CSS-side counterpart of stripNonContentRegions(). Routing every
+ * structural check through one of the two views is what makes commented-out
+ * markup completely inert: a `<table>` or an `<h2>Skills</h2>` inside an HTML
+ * comment renders nothing, so it must neither produce a critical "table layout"
+ * finding nor score the Skills section as present.
+ * @param {string} html
+ * @returns {string}
+ */
+function stripInertRegions(html) {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script\b[^>]*>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ');
+}
+
+/**
+ * Drop CSS block comments from the contents of a stylesheet block. A declaration
+ * written inside a CSS comment is not applied by the browser, so it must not
+ * create a font / column / hidden-text warning. Inline styles are deliberately
+ * NOT passed through this: cssDeclarations() already reads them with real CSS
+ * comment semantics, which the identifier-splitting regression suite depends
+ * on (a comment placed mid-identifier splits it, so it is not recognised).
+ * @param {string} css
+ * @returns {string}
+ */
+function stripCssComments(css) {
+  // The lazy body with an `|$` escape also consumes an unterminated comment,
+  // and one pass keeps this linear even on runs of unterminated `/*`.
+  return css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, ' ');
+}
+
+/**
  * Extract the human-visible text of the CV: drop script/style/comments, unwrap
  * tags, decode the handful of entities that appear in these documents, collapse
  * whitespace. This is what an ATS text extractor is (roughly) left with.
@@ -317,7 +356,11 @@ function hasMultiColumn(blob) {
  * @returns {string}
  */
 function extractStyleText(html) {
-  return [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map(m => m[1]).join('\n');
+  // Comments/scripts stripped first: a `<style>` block written inside an HTML
+  // comment renders nothing, so its declarations must not be scored. CSS
+  // comments inside a live block are removed too (see stripCssComments).
+  return [...stripInertRegions(html).matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)]
+    .map(m => stripCssComments(m[1])).join('\n');
 }
 
 /**
@@ -328,7 +371,10 @@ function extractStyleText(html) {
  * @returns {string[]}
  */
 function extractInlineStyles(html) {
-  return [...html.matchAll(/style\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)].map(m => m[1] ?? m[2]);
+  // An element written inside an HTML comment or a script string is never
+  // rendered, so its style attribute must not be scored either.
+  return [...stripInertRegions(html).matchAll(/style\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)]
+    .map(m => m[1] ?? m[2]);
 }
 
 // UTF-16 code units for the punctuation `cssDeclarations` reacts to.
@@ -469,11 +515,18 @@ function cssDeclarations(style) {
  * @returns {string[]}
  */
 function extractHeadings(html) {
+  // A heading inside an HTML comment / <style> / <script> is not a heading an
+  // ATS extractor sees. Stripping here (not only at the call site) makes the
+  // function correct for every caller and keeps commented-out `<h2>Skills</h2>`
+  // from faking a present section.
+  const source = stripNonContentRegions(html);
   const out = [];
-  for (const m of html.matchAll(/<[^>]*class\s*=\s*"[^"]*\bsection-title\b[^"]*"[^>]*>([\s\S]*?)<\//gi)) {
+  // Both attribute quote forms are valid HTML. Matching only `class="…"` made a
+  // legitimate `class='section-title'` CV report three missing sections.
+  for (const m of source.matchAll(/<[^>]*class\s*=\s*(?:"[^"]*\bsection-title\b[^"]*"|'[^']*\bsection-title\b[^']*')[^>]*>([\s\S]*?)<\//gi)) {
     out.push(stripInline(m[1]));
   }
-  for (const m of html.matchAll(/<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]>/gi)) {
+  for (const m of source.matchAll(/<h[1-6]\b[^>]*>([\s\S]*?)<\/h[1-6]>/gi)) {
     out.push(stripInline(m[1]));
   }
   // Folded to ASCII, because the patterns matched against these are ASCII by
@@ -492,7 +545,9 @@ function extractHeadings(html) {
  * Build the target keyword set for the advisory coverage check. `--keywords` is
  * split on commas; `--role` is split only on commas, slashes, and the word
  * "and", so a plain title like "Senior Backend Engineer" stays a single phrase
- * matched verbatim against the CV text (it is NOT tokenized into words).
+ * rather than three independent keywords. The coverage check tokenizes both
+ * sides on word boundaries (see keywordPresent), so the phrase must appear as
+ * a contiguous run of whole words — never as a substring of a longer word.
  * @param {string|string[]|undefined} keywords
  * @param {string|undefined} role
  * @returns {string[]} De-duplicated, trimmed keyword phrases (length >= 2).
@@ -503,6 +558,63 @@ function normalizeKeywords(keywords, role) {
   else if (typeof keywords === 'string') list.push(...keywords.split(','));
   if (role) list.push(...String(role).split(/[,/]|\band\b/i));
   return [...new Set(list.map(k => k.trim()).filter(k => k.length >= 2))];
+}
+
+/**
+ * Split text into lowercase word tokens. Word characters are Unicode
+ * letters/digits plus the `_` that joins compound identifiers; apostrophes stay
+ * INSIDE a token so `Master's` survives as one word and matches `Master&#39;s`
+ * in the CV text. A fresh regex per call keeps this free of shared `lastIndex`
+ * state. Used on both the CV text and each keyword, so matching is token- and
+ * boundary-aware rather than a raw `includes()`: "go" no longer matches inside
+ * "Django", and "R&D" matches the CV's "R&amp;D" (the ampersand is a separator
+ * on both sides).
+ * @param {string} text
+ * @returns {string[]}
+ */
+function keywordTokens(text) {
+  return String(text).toLowerCase().match(/[\p{L}\p{N}_]+(?:['’][\p{L}\p{N}_]+)*/gu) || [];
+}
+
+/**
+ * Common trailing inflections shared by a keyword token and a CV token. This is
+ * intentionally small and conservative: it prevents an honest inflection from
+ * being reported missing without letting short, unrelated words collapse onto
+ * each other. Only suffixes of >= 3 characters are stripped.
+ * @param {string} token
+ * @returns {string[]} The token plus any inflected stems, longest first.
+ */
+function tokenForms(token) {
+  const forms = new Set([token]);
+  for (const [suffix, replacement] of [['ies', 'y'], ['ing', ''], ['ed', ''], ['es', ''], ['s', '']]) {
+    if (token.length - suffix.length >= 3 && token.endsWith(suffix)) {
+      forms.add(token.slice(0, -suffix.length) + replacement);
+    }
+  }
+  return [...forms].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Whether a keyword phrase appears in the lowercased CV text as a run of whole
+ * word tokens, case-insensitively and tolerating the common inflections above.
+ * Punctuation and spacing are ignored because both sides are tokenized; a
+ * phrase matches only when its tokens appear consecutively and in order.
+ * @param {string} keyword
+ * @param {string[]} textTokens Lowercased tokens of the CV text.
+ * @returns {boolean}
+ */
+function keywordPresent(keyword, textTokens) {
+  const wanted = keywordTokens(keyword);
+  if (wanted.length === 0) return false;
+  outer:
+  for (let start = 0; start <= textTokens.length - wanted.length; start++) {
+    for (let j = 0; j < wanted.length; j++) {
+      const forms = tokenForms(wanted[j]);
+      if (!forms.includes(textTokens[start + j])) continue outer;
+    }
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -545,6 +657,11 @@ const CHECK_SCOPE = {
  * @returns {{score:number, grade:string, issues:{id:string,scope:'structural'|'content',severity:string,message:string}[], keywordCoverage:null|{total:number,found:number,percent:number,missing:string[]}}}
  */
 function auditAts(html, opts = {}) {
+  // The same non-content-stripped view the text/link/image checks use. Markup
+  // checks (tables, charset) read this so a `<table>` or `<meta charset>` written
+  // inside a comment/script is inert — no false critical, no false pass. The CSS
+  // helpers below use stripInertRegions() internally so real declarations survive.
+  const contentHtml = stripNonContentRegions(html);
   const text = extractVisibleText(html);
   const css = extractStyleText(html);
   const inlineStyles = extractInlineStyles(html);
@@ -566,8 +683,8 @@ function auditAts(html, opts = {}) {
   // 2. Standard section headings.
   const headingBlob = extractHeadings(html).join(' | ');
   // Matched against BOTH the raw heading and its ASCII fold (extractHeadings
-  // emits each). The Latin terms are therefore written unaccented: `competenc`
-  // catches Competences, Competências and Competenze via the fold, so only
+  // emits each). The Latin terms are therefore written unaccented: accented
+  // headings such as `Compétences` fold onto their plain spelling, so only
   // genuinely different words need their own alternative.
   //
   // career-ops ships evaluation modes for ar, da, de, es, fr, hi, id, it, ja,
@@ -580,7 +697,7 @@ function auditAts(html, opts = {}) {
   // Each term must START a word: `formation` must not be found inside
   // `Information`, nor `formacion` inside `Informacion`. `\b` is ASCII-only, so
   // the boundary is "not preceded by a letter or digit" in any script. Terms
-  // stay open on the right (`experien`, `competen`) and the German, Dutch,
+  // stay open on the right (`experien`, `proficienc`) and the German, Dutch,
   // Danish and Norwegian compounds that put the key word LAST are listed whole.
   const startsWord = (terms) => new RegExp(`(?<![\\p{L}\\p{N}])(?:${terms.join('|')})`, 'u');
   const required = [
@@ -627,7 +744,12 @@ function auditAts(html, opts = {}) {
       'hoc van',                                           // vi (folded)
     ]) },
     { name: 'Skills', re: startsWord([
-      'skills', 'competen', 'proficienc',                  // en, + es pt fr folded; 'competen' also covers it 'Competenze'
+      // `competen` used to be listed here as an open prefix, which made the
+      // bare `Core Competencies` heading pass for Skills — exactly the document
+      // modes/ats.md warns parsers drop whole. Only the specific localized
+      // spellings count; the English `Competencies` stem does not.
+      'skills', 'proficienc',
+      'competences', 'competenze', 'competencias',         // fr, it, es/pt (folded)
       'kenntnisse', 'fachkenntnisse', 'sprachkenntnisse', 'fahigkeiten', // de
       'habilidades',                                       // es pt
       'vaardigheden',                                      // nl
@@ -693,7 +815,7 @@ function auditAts(html, opts = {}) {
   // not reorder content, so it is deliberately NOT flagged (the template's
   // definition-list-style certifications block uses it and parses fine).
   let layout = WEIGHTS.layout;
-  const tableTags = (html.match(/<table\b/gi) || []).length;
+  const tableTags = (contentHtml.match(/<table\b/gi) || []).length;
   const multiColumn = styleBlobs.some(hasMultiColumn);
   const absPos = (css.match(/position\s*:\s*absolute/gi) || []).length
     + inlineStyles.filter(s => /position\s*:\s*absolute/i.test(s)).length;
@@ -732,8 +854,14 @@ function auditAts(html, opts = {}) {
   // 6. Standard, embeddable fonts. Scan both <style> blocks and inline styles so
   // an inline font-family is scored the same as one in a stylesheet.
   const families = new Set();
+  // Require a declaration boundary before `font-family`. An unanchored pattern
+  // also matches the `--font-family: …` CUSTOM PROPERTY DEFINITION the shipped
+  // template declares at :root, so every shipped CV was docked 3 points for a
+  // font it never used. `var(--font-family)` references have no `:` and stay
+  // ignored; their fallback slot is still read by parseFontFamilies().
+  const fontDeclarationRe = /(?:^|[;{}])\s*font-family\s*:\s*([^;{}]+)/gi;
   for (const blob of styleBlobs) {
-    for (const m of blob.matchAll(/font-family\s*:\s*([^;{}]+)/gi)) {
+    for (const m of blob.matchAll(fontDeclarationRe)) {
       for (const fam of parseFontFamilies(m[1])) {
         if (!GENERIC_FAMILIES.has(fam)) families.add(fam);
       }
@@ -748,7 +876,7 @@ function auditAts(html, opts = {}) {
   }
 
   // 7. UTF-8 declared.
-  if (/<meta[^>]*charset\s*=\s*["']?\s*utf-8/i.test(html)) {
+  if (/<meta[^>]*charset\s*=\s*["']?\s*utf-8/i.test(contentHtml)) {
     score += WEIGHTS.charset;
   } else {
     add('charset', 'warning', 'No <meta charset="utf-8"> declared. Declare UTF-8 so accented characters and symbols survive ATS text extraction.');
@@ -791,9 +919,13 @@ function auditAts(html, opts = {}) {
   let keywordCoverage = null;
   const keywords = normalizeKeywords(opts.keywords, opts.role);
   if (keywords.length) {
-    const haystack = text.toLowerCase();
-    const found = keywords.filter(k => haystack.includes(k.toLowerCase()));
-    const missingKeywords = keywords.filter(k => !haystack.includes(k.toLowerCase()));
+    // A raw `haystack.includes(k)` credited a short keyword found inside a
+    // longer word — "go" inside "Django" produced a bogus 100% coverage.
+    // Compare token sequences instead, so every reported hit is a whole-word
+    // (or whole-phrase) match and the advisory percentage stays honest.
+    const textTokens = keywordTokens(text);
+    const found = keywords.filter(k => keywordPresent(k, textTokens));
+    const missingKeywords = keywords.filter(k => !keywordPresent(k, textTokens));
     keywordCoverage = {
       total: keywords.length,
       found: found.length,
@@ -1340,7 +1472,12 @@ function printHuman(result, file, minScore) {
   }
   console.log(`\nATS check ${pass ? 'passed' : 'failed'}: ${file}`);
   if (!pass) {
-    console.log('Fix the critical/warning items above, or lower the bar with --min-score if you accept the risk.');
+    const hasCritical = result.issues.some(i => i.severity === 'critical');
+    if (hasCritical) {
+      console.log('Fix the critical issue(s) above in the document — --min-score cannot clear a critical issue; it only changes the score threshold.');
+    } else {
+      console.log('Fix the warning item(s) above, or lower the non-critical score threshold with --min-score (warnings are still reported).');
+    }
   }
 }
 

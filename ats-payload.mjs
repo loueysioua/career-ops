@@ -10,13 +10,11 @@
  *
  * THE FOLD (applied — pure data movement, no text invented, fully reversible)
  *
- *   `build-cv-html.mjs` renders competencies as bare tag spans into a container
- *   whose separation is entirely visual (`.competencies-grid { gap: 8px }`).
- *   There is no delimiter CHARACTER between one competency and the next — the gap
- *   is CSS. Extract the text layer and adjacent competencies run together into a
- *   single token. On top of that the block ships under `Core Competencies`, which
- *   is not a section name parsers recognise, so it is frequently dropped whole
- *   rather than merely mangled.
+ *   `build-cv-html.mjs` renders competencies as bare tag spans separated by a
+ *   `', '` delimiter (see `buildCompetencies()`), but under a `Core Competencies`
+ *   heading that ATS parsers do not recognise. The delimiter is present in the
+ *   text layer; what is lost is the block itself, which parsers frequently drop
+ *   whole because `Core Competencies` is not a section name they key off.
  *
  *   `Skills` IS recognised, and already renders through `buildSkills()` as
  *   `<span class="skill-category">Cat:</span> a, b, c` — comma-delimited, under a
@@ -252,6 +250,26 @@ export function validatePayloadShape(payload) {
 // ── The transform: fold competencies[] into skills[] ─────────────────────────
 
 /**
+ * Refuse a malformed payload at the library boundary too. The CLI already calls
+ * validatePayloadShape() before transforming, but the exported functions were
+ * callable directly — and `foldCompetencies()` normalizes a non-array `skills`
+ * to `[]`, silently discarding the value and returning a clean-looking result.
+ * That is exactly the data loss the CLI guard exists to prevent, so library
+ * callers get the same guard and a clear, actionable error.
+ * @param {object} payload - Parsed CV payload.
+ * @returns {void}
+ * @throws {Error} when validatePayloadShape() reports the shape unusable.
+ */
+function assertPayloadShape(payload) {
+  const errors = validatePayloadShape(payload ?? {});
+  if (errors.length === 0) return;
+  throw new Error(
+    'ats-payload: refusing to transform a malformed payload:\n  - ' + errors.join('\n  - ')
+    + '\nFix the payload shape above before calling the transform.'
+  );
+}
+
+/**
  * Move `competencies[]` into `skills[]` as one comma-delimited category and
  * empty the source array.
  *
@@ -266,14 +284,15 @@ export function validatePayloadShape(payload) {
  *      second category being prepended — the case where a payload was re-edited
  *      with some competencies re-added after a first fold.
  *
- * Callers are expected to have run `validatePayloadShape()` first: this function
- * normalizes a non-array `skills` to `[]`, which DISCARDS it. The CLI validates
- * at its boundary so that path is unreachable there.
+ * The payload shape is validated here as well as at the CLI boundary: a
+ * non-array `skills` would otherwise be normalized to `[]` and DISCARDED.
  *
  * @param {object} payload - Parsed CV payload. Never mutated.
  * @returns {{payload: object, transform: object}} New payload + what was done.
+ * @throws {Error} when the payload shape is unusable.
  */
 export function foldCompetencies(payload) {
+  assertPayloadShape(payload);
   const source = payload && typeof payload === 'object' ? payload : {};
   const competencies = toItemList(source.competencies);
   const category = resolveCompetenciesCategory(source);
@@ -351,16 +370,27 @@ const CORPORATE_SUFFIX_RE = /\b(?:inc|llc|l\.l\.c|ltd|limited|gmbh|mbh|ag|s\.?a\
 // the case it would have caught.
 const EMPLOYER_PREPOSITION_RE = /(?:\s(?:at|@)\s|\s@|^@)/i;
 
-// Explicit client framing — the consulting/agency shape this lint exists for.
-const CLIENT_MARKER_RE = /\b(?:client|customer|on behalf of|seconded to|via|through)\s*[:—–-]?\s*\S/i;
+// Explicit retained-client framing — the consulting/agency shape this lint
+// exists for. Deliberately narrow: a bare `customer` or `via` is ordinary title
+// vocabulary ("Customer Success Engineer", "Engineer via API gateway") and must
+// never trigger a false employer-in-role finding. What counts is the literal
+// `Client` placeholder, an explicit preposition attached to it, or an
+// unambiguous "on behalf of / seconded to" phrase naming the end employer.
+const CLIENT_MARKER_RE = /(?:\bclient\s*(?::|\u2014|\u2013|-)\s*\S|\bclient\s+of\s+\S|\b(?:at|for)\s+client\b|\b(?:on behalf of|seconded to)\s+\S)/i;
 
 // A parenthetical inside `company`. Both ASCII and CJK full-width brackets: a
 // ja/zh payload writes （云平台事业部）and the parser keeps it verbatim just the same.
 const PARENTHETICAL_RE = /[(（]\s*([^)）]*?)\s*[)）]/;
 
 // One date range: an endpoint, a separator, an endpoint. Endpoint forms cover
-// "June 2022", "Jun. 2022", "06/2022", "2022" and the open end ("Present").
-const DATE_POINT = '(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?\\s*,?\\s*\\d{4}'
+// month names ("June 2022", "Jun. 2022"), seasons and quarters ("Spring 2022",
+// "Q3 2023") — the phrasing academic and consulting CVs use — numeric forms
+// ("06/2022", "2022") and the open end ("Present"). Without the season/quarter
+// forms, "Spring 2022 – Fall 2023, 2024 – Present" read as a single range and
+// the multiple-date-ranges lint never fired.
+const DATE_POINT = '(?:(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?'
+  + '|(?:spring|summer|fall|autumn|winter)'
+  + '|q[1-4])\\s*,?\\s*\\d{4}'
   + '|\\d{1,2}\\s*[/.]\\s*\\d{4}'
   + '|\\d{4}'
   + '|present|current|now|ongoing|date)';
@@ -482,8 +512,10 @@ export function lintPayload(payload) {
  *
  * @param {object} payload - Parsed CV payload. Never mutated.
  * @returns {{payload: object, transform: object, findings: Array<object>}}
+ * @throws {Error} when the payload shape is unusable.
  */
 export function transformPayload(payload) {
+  assertPayloadShape(payload);
   const { payload: folded, transform } = foldCompetencies(payload);
   return { payload: folded, transform, findings: lintPayload(folded) };
 }
@@ -528,6 +560,14 @@ function runSelfTest() {
     const ok = JSON.stringify(actual) === JSON.stringify(expected);
     if (ok) { passed++; console.log(`  ✅ ${label}`); }
     else { failed++; console.log(`  ❌ ${label}\n     expected: ${JSON.stringify(expected)}\n     actual:   ${JSON.stringify(actual)}`); }
+  };
+  // The exported transform functions now validate their input too (A9), so the
+  // two "before the guard" demonstrations below assert the rejection instead.
+  const throws = (label, fn, pattern) => {
+    let ok = false;
+    try { fn(); } catch (err) { ok = pattern.test(err.message); }
+    if (ok) { passed++; console.log(`  ✅ ${label}`); }
+    else { failed++; console.log(`  ❌ ${label}`); }
   };
 
   // ── The fold ──
@@ -602,8 +642,8 @@ function runSelfTest() {
   eq('a mixed-type competencies array is refused', validatePayloadShape(mixed).length, 1);
   eq('the error names the offending index and type',
     /\[1\] \(object\)/.test(validatePayloadShape(mixed)[0]), true);
-  eq('and that member really was being dropped before the guard',
-    foldCompetencies(mixed).payload.skills[0].items, 'AWS');
+  throws('the exported fold refuses the mixed-type array instead of dropping a member',
+    () => foldCompetencies(mixed), /no scalar value/);
   eq('a null member is refused too',
     validatePayloadShape({ competencies: ['AWS', null] }).length, 1);
   eq('a nested-array member is refused too',
@@ -644,8 +684,8 @@ function runSelfTest() {
   eq('an object items on the merge target is refused', validatePayloadShape(scalarItems({ a: 1 })).length, 1);
   eq('the error names the offending type',
     /items` of type number/.test(validatePayloadShape(scalarItems(2024))[0]), true);
-  eq('and that value really was being overwritten before the guard',
-    foldCompetencies(scalarItems(2024)).payload.skills[0].items, 'A');
+  throws('the exported fold refuses a scalar items instead of overwriting it',
+    () => foldCompetencies(scalarItems(2024)), /items` of type number/);
 
   // The container forms the merge can actually carry, and the absent case.
   eq('a string items on the merge target is accepted', validatePayloadShape(scalarItems('X')), []);

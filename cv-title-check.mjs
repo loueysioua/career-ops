@@ -64,7 +64,7 @@ import { isMainModule } from './lib/is-main-module.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
 import { cvSourcePaths, readCvSources } from './lib/cv-sources.mjs';
 import {
-  boldLineText, findExperienceSections, headingText, toPlainText, EXPERIENCE_HEADING_NAMES,
+  boldLineText, boldTitleWithDates, findExperienceSections, headingText, toPlainText, EXPERIENCE_HEADING_NAMES,
 } from './lib/cv-markdown.mjs';
 
 const CV_PATHS = cvSourcePaths(getCareerOpsRoot());
@@ -116,6 +116,15 @@ export function parseCvExperience(cvText) {
         if (/^#{2,3}\s+/.test(next)) break;
         if (next.trim() === '') continue;
         if (title === null) {
+          // `**Title** · Feb 2023 – present` carries both fields on one line.
+          // Rejecting the partly-bold shape used to yield zero entries and a
+          // "title check did not run" verdict for the project's own fixture.
+          const inline = boldTitleWithDates(next);
+          if (inline) {
+            title = inline.title;
+            dates = inline.dates;
+            break;
+          }
           const bold = boldLineText(next);
           if (bold) {
             title = bold;
@@ -579,6 +588,20 @@ function runSelfTest() {
   eq('a trailing hard-break backslash on the title line is dropped', oneEntry('## Experience', '### Co -- City', '**Engineer**\\', '2020-2024'), plainEntry);
   eq('escaped characters in a title are unescaped', oneEntry('## Experience', '### Co -- City', '**C\\# \\| Engineer**', '2020-2024')[0]?.title, 'C# | Engineer');
   eq('an unrelated "## Skills" section is still not Experience', oneEntry('## Skills', '### Co -- City', '**Engineer**', '2020-2024'), []);
+  // F4: a partly-bold title line with an inline `·` date range is a real entry.
+  eq('a partly-bold title with an inline date range is parsed',
+    parseCvExperience('## Experience\n\n### Co -- City\n\n**Engineering Lead** · Feb 2023 – present\n'),
+    [{ company: 'Co', title: 'Engineering Lead', dates: 'Feb 2023 – present' }]);
+  const inlineEntries = parseCvExperience('## Experience\n\n### Co -- City\n\n**Senior Software Engineer** · Feb 2023 – present\n');
+  const inlineResult = checkTitles(inlineEntries, parseTailoredExperience({
+    experience: [{ company: 'Co', role: 'Engineering Lead', dates: 'Feb 2023 - present' }],
+  }));
+  eq('an inline-date title line reports a real mismatch, not "did not run"',
+    inlineResult.mismatches.map(m => m.tailoredTitle), ['Engineering Lead']);
+  eq('an inline-date mismatch is not flagged unverified',
+    diagnoseUnverified(inlineEntries, parseTailoredExperience({
+      experience: [{ company: 'Co', role: 'Engineering Lead', dates: 'Feb 2023 - present' }],
+    }), inlineResult), null);
 
   // Dates: any run of hyphens / en dashes / em dashes is one separator.
   eq('"--" dates equal "-" dates', normalizeDates('09/2021 -- Present'), normalizeDates('09/2021 - Present'));

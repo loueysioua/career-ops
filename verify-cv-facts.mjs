@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from 'fs';
 import { isAbsolute, join, basename } from 'path';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
-import { findExperienceSections, headingText, boldLineText, toPlainText, normalizePandocLine } from './lib/cv-markdown.mjs';
+import { findExperienceSections, headingText, boldLineText, boldTitleWithDates, toPlainText, normalizePandocLine } from './lib/cv-markdown.mjs';
 import { cvSourcePaths } from './lib/cv-sources.mjs';
 
 // Two roots, because this gate compares user-layer files against a user-layer
@@ -1189,6 +1189,10 @@ const STRUCTURED_HTML_FIELDS = [
   ['cert-title', 'certification', true],
   // Standards/authorship credits are rendered in awards too (#1411).
   ['award-title', 'award', true],
+  // F3: a project NAME is a fact claim, as much as an employer or a degree.
+  // build-cv-html.mjs emits `.project-title`; lib/cv-payload-facts.mjs projects
+  // the LaTeX payload's projects/awards onto this same vocabulary.
+  ['project-title', 'project', true],
   ['job-role', 'title', false],
 ];
 // One level of nested braces, enough for `\textbf{...}` inside an argument.
@@ -1198,6 +1202,40 @@ const LATEX_ARG = String.raw`\s*\{((?:[^{}]|\{[^{}]*\})*)\}`;
 // an institution and the third a role or a degree. The first blocks; the third
 // is read as a title and warns, for the reason given above.
 const LATEX_SUBHEADING_RE = new RegExp(String.raw`\\resumeSubheading${LATEX_ARG}${LATEX_ARG}${LATEX_ARG}${LATEX_ARG}`, 'g');
+// F3: awards AND projects are emitted with \resumeProjectHeading, which the
+// build gate never parsed. Its first argument nests two brace levels in the
+// bundled template (`\href{url}{\textbf{Name}} \emph{$|$ context}`), so the
+// single-level LATEX_ARG is not enough here.
+const LATEX_ARG_DEEP = String.raw`\s*\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}`;
+const LATEX_PROJECT_HEADING_RE = new RegExp(String.raw`\\resumeProjectHeading${LATEX_ARG_DEEP}${LATEX_ARG_DEEP}`, 'g');
+
+/** Turn a raw \resumeProjectHeading argument into the readable name/date. */
+function latexProjectArgument(arg) {
+  return stripMarkup(
+    arg.replace(/\\href\s*\{[^{}]*\}/g, ' ') // drop the URL, keep its braced label
+      .replace(/\\emph\s*\{[^{}]*\}/g, ' ') // drop `$|$ context` / issuing body
+  ).replace(/[{}]/g, ' ').trim();
+}
+
+/**
+ * Project/award names emitted as `\resumeProjectHeading` in a raw .tex.
+ * Kept separate from structuredFieldClaims() so a document whose sources do
+ * not declare projects is not turned into a false block by a synthetic fixture;
+ * verifyFacts() only applies these when a source actually has a Projects or
+ * Awards section to check them against. The LaTeX BUILDER's gate projects the
+ * payload fields unconditionally through lib/cv-payload-facts.mjs instead.
+ */
+export function latexProjectHeadingClaims(text) {
+  const claims = [];
+  const seen = new Set();
+  for (const match of latexBody(text ?? '').matchAll(LATEX_PROJECT_HEADING_RE)) {
+    const value = normalizeFact(latexProjectArgument(match[1]));
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    claims.push({ kind: 'project', value, line: value, blocking: true });
+  }
+  return claims;
+}
 
 /**
  * Find balanced (span|div) elements matching an open-tag regex.
@@ -1292,9 +1330,20 @@ export function structuredFieldClaims(text) {
       );
       const cleaned = removeBalancedElements(
         withoutEduOrg,
-        /<span\b[^>]*\bclass="[^"]*"[^>]*>/gi,
+        // findBalancedElements reads the tag name from capture group 1 — a
+        // bare `<span` with no group removed nothing, so a decorative badge
+        // span (e.g. "Data Viz" next to a project title) leaked into the
+        // project-name claim and blocked a CV whose real name was sourced.
+        /(span)\b[^>]*\bclass="[^"]*"[^>]*>/gi,
       );
-      add(kind, cleaned, blocking);
+      // A project title is the link text; a sibling badge ("Data Viz", a
+      // technology tag) is presentation, not part of the name. Prefer the
+      // anchor text so a sourced project name is not turned into an unsourced
+      // "Name Badge" claim while badges still cannot hide an invented name.
+      const linkedName = kind === 'project'
+        ? cleaned.match(/<a\b[^>]*>([\s\S]*?)<\/a>/i)?.[1]
+        : null;
+      add(kind, linkedName ?? cleaned, blocking);
     }
   }
   for (const match of raw.matchAll(LATEX_SUBHEADING_RE)) {
@@ -1315,32 +1364,122 @@ function sourceExperience(text) {
       const block = lines.slice(start, starts[i + 1] ?? lines.length);
       const company = headingText(block[0], 3).split(/\s+[-–—]+\s+/)[0];
       const body = block.slice(1).filter(line => line.trim());
-      const title = boldLineText(body[0]);
+      // F4: a partly-bold line carrying its own `·` date range is a real entry
+      // (`**Engineering Lead** · Feb 2023 – present`). Reading only a wholly
+      // bold title line made such a CV parse to zero entries.
+      const inline = body[0] ? boldTitleWithDates(body[0]) : null;
+      const title = inline ? inline.title : boldLineText(body[0]);
+      const dates = inline ? inline.dates : (title && body[1] ? toPlainText(body[1]) : '');
       // Keep incomplete headers as evidence of employment. Dropping one
       // could misclassify a genuine employer mentioned elsewhere as a client.
-      return [{ company, title: title || '', dates: title && body[1] ? toPlainText(body[1]) : '', body: body.join('\n') }];
+      return [{ company, title: title || '', dates, body: body.join('\n') }];
     });
   });
 }
 
+// Education section names across the markets and shapes this checkout holds.
+// `## Formation` (FR) and `## Educación` (ES) are the same field as
+// `## Education` — a source that only declares one of them must not be treated
+// as having no education, which used to silently disable the association gate.
+const EDUCATION_HEADING_RE = /^(?:education(?: and training)?|formation|éducation|educaci[oó]n|educa[cç][aã]o|ausbildung|studium|educazione|istruzione|utbildning)/i;
+const EDU_YEAR_RE = /\b((?:19|20)\d{2})\b/;
+function educationYear(value) {
+  const match = String(value ?? '').match(EDU_YEAR_RE);
+  return match ? match[1] : '';
+}
+// Split a trailing `(2018)`, `-- 2022-Présent`, `| Sep 2022 – Present`, etc. off
+// an education line, leaving the degree and school as the leading text.
+function splitEducationTail(text) {
+  let rest = String(text ?? '');
+  let year = '';
+  const paren = rest.match(/\s*\(([^)]*(?:19|20)\d{2}[^)]*)\)\s*$/);
+  if (paren) {
+    year = educationYear(paren[1]);
+    rest = rest.slice(0, paren.index);
+  } else {
+    const dash = rest.match(/\s*(?:[-–—]{1,2}|\|)\s*([^|]*?(?:19|20)\d{2}[^|]*)\s*$/);
+    if (dash) {
+      year = educationYear(dash[1]);
+      rest = rest.slice(0, dash.index);
+    }
+  }
+  return { rest: rest.trim(), year };
+}
+
+/**
+ * Parse one education record. Accepts the flat `Degree, School (Year)` shape of
+ * examples/cv-example.md, the `**Degree** — School` shape with a `*Location |
+ * date*` follow-up line used by several cvs/*, single-line markdown tables, and
+ * the French/Spanish `Diplôme, INSAT -- 2022-Présent` spelling.
+ * Returns the record plus how many lines it consumed (so a date follow-up line
+ * is not then misread as its own bogus degree/school pair).
+ */
+function parseEducationRecord(plain, lines, index) {
+  const { rest, year: tailYear } = splitEducationTail(plain);
+  // Table row: | Degree | School | Year |
+  if (/^\|/.test(plain)) {
+    const cells = plain.split('|').map(c => c.trim()).filter(Boolean);
+    if (cells.length >= 2) {
+      return { entry: { title: cells[0], org: cells[1], year: educationYear(cells[2]) || tailYear }, consume: 0 };
+    }
+    return null;
+  }
+  let title, org, year = tailYear;
+  if (rest.includes(',')) {
+    const comma = rest.indexOf(',');
+    title = rest.slice(0, comma).trim();
+    org = rest.slice(comma + 1).trim();
+    // Extra comma-separated detail (GPA, a parenthetical school expansion, a
+    // city) may belong to either field. Guessing a tuple would let a degree
+    // from one line pair with a school from another, so leave it unreadable —
+    // the source still supplies the two strings as loose evidence, and the
+    // gate reports a coverage gap instead of a fabricated contradiction.
+    if (org.includes(',')) return null;
+  } else {
+    const dash = rest.match(/^(.+?)\s+(?:—|–|--|-)\s+(.+)$/);
+    if (!dash) return null;
+    title = dash[1].trim();
+    org = dash[2].trim();
+  }
+  if (!title || !org) return null;
+  // A following italic / location line often carries the dates for the
+  // `Degree — School` shape: `*Tunis, Tunisia | Sep 2022 – Present*`.
+  let consume = 0;
+  if (!year && index + 1 < lines.length) {
+    const next = toPlainText(lines[index + 1]).trim();
+    if (next && EDU_YEAR_RE.test(next) && (/\|/.test(next) || /^\*/.test(lines[index + 1]))) {
+      year = educationYear(next);
+      consume = 1;
+    }
+  }
+  return { entry: { title, org, year }, consume };
+}
+
 function sourceEducation(text) {
   const entries = [];
-  let complete = true;
+  const unrecognized = [];
   let inEducation = false;
-  for (const raw of text.split(/\r?\n/)) {
-    const line = normalizePandocLine(raw);
+  let hasEducation = false;
+  const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n').map(normalizePandocLine);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const heading = headingText(line, 2);
-    if (heading !== null) { inEducation = /^education$/i.test(heading); continue; }
-    if (!inEducation || !line.trim() || /^\s*[-*_]{3,}\s*$/.test(line)) continue;
-    // The flat convention used in examples/cv-example.md. A multiline or
-    // table convention needs its own parser; don't infer a tuple from prose.
-    const match = toPlainText(line).replace(/^\s*[-*+]\s+/, '').match(/^([^,]+),\s*(.+?)(?:\s*\(((?:19|20)\d{2})\))?\s*$/);
-    // Extra comma-separated detail may be a location, GPA or part of the
-    // school name. It is not evidence of a different degree-school pair.
-    if (match && !match[2].includes(',')) entries.push({ title: match[1].trim(), org: match[2].trim(), year: match[3] || '' });
-    else complete = false;
+    if (heading !== null) { inEducation = EDUCATION_HEADING_RE.test(heading); continue; }
+    if (!inEducation || /^\s*[-*_]{3,}\s*$/.test(line)) continue;
+    const plain = toPlainText(line).replace(/^\s*[-*+]\s+/, '').trim();
+    if (!plain) continue;
+    hasEducation = true;
+    const parsed = parseEducationRecord(plain, lines, i);
+    if (parsed) {
+      entries.push(parsed.entry);
+      i += parsed.consume;
+    } else {
+      unrecognized.push(plain);
+    }
   }
-  return { entries, complete };
+  // `complete` is scoped to sources that actually declare education: a CV with
+  // no Education section is not an unreadable source.
+  return { entries, complete: hasEducation && unrecognized.length === 0, hasEducation, unrecognized };
 }
 
 const DATE_MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -1376,7 +1515,15 @@ export function structuredAssociationClaims(targetText, sourceTexts, config = {}
   const experience = sourceTexts.flatMap(sourceExperience);
   const educationSources = sourceTexts.map(sourceEducation);
   const education = educationSources.flatMap(source => source.entries);
-  const educationComplete = educationSources.every(source => source.complete);
+  // F1: one additional CV written in a format we cannot fully read must NOT
+  // veto a clear contradiction the readable CVs support. `every()` let a single
+  // non-flat cvs/* silently disable both the degree↔school and graduation-date
+  // blocks. At least one readable, complete source is enough; the unreadable
+  // ones are surfaced as a coverage warning below rather than silently trusted.
+  const educationComplete = educationSources.some(source => source.complete && source.entries.length > 0);
+  if (educationSources.some(source => source.hasEducation && !source.complete)) {
+    gaps.add('Some CVs declare education in a format the gate could not fully read; education associations were checked against the remaining sources only.');
+  }
   const add = (list, kind, value) => list.push({ kind, value: norm(value) });
   const jobs = blocks('job');
   const jobContexts = [];
@@ -1451,6 +1598,168 @@ export function structuredAssociationClaims(targetText, sourceTexts, config = {}
     }
   }
   return { blocked, advisory, warnings: [...gaps] };
+}
+
+// ── F6: contradictions across the user's CVs ──────────────────────────
+// The fact gate otherwise unions every source into one bag of evidence, so two
+// CVs that disagree about a handle, a title or a graduation year are invisible:
+// either value can be used and no one is told. This detector is READ-ONLY. It
+// reports the conflict with provenance and the documented precedence
+// (article-digest.md → cv.md → cvs/*) and never picks the flattering value.
+const CONTRADICTION_HANDLE_PATTERNS = [
+  ['github', /github\.com\/([A-Za-z0-9][A-Za-z0-9_-]{1,39})/gi],
+  ['linkedin', /linkedin\.com\/in\/([A-Za-z0-9][A-Za-z0-9_-]{1,49})/gi],
+];
+const CONTRADICTION_EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const CONTRADICTION_PRECEDENCE = (path) => {
+  const name = String(path).split(/[\\/]/).pop().toLowerCase();
+  return name === 'article-digest.md' ? 0 : name === 'cv.md' ? 1 : 2;
+};
+
+/**
+ * Conflicting values for the same field across CV sources.
+ * @param {Array<{path: string, text: string}>} records
+ * @returns {Array<{field: string, key: string, preferred: string, values: Array<{value: string, sources: string[]}>}>}
+ */
+export function sourceContradictions(records) {
+  const sources = [...records]
+    .map((record, index) => ({ ...record, label: String(record.path).split(/[\\/]/).pop(), precedence: CONTRADICTION_PRECEDENCE(record.path), index }))
+    .sort((a, b) => a.precedence - b.precedence || a.index - b.index);
+  // field -> key -> Map(value -> { sources:Set, precedence:number })
+  const collected = new Map();
+  const headingParts = [];
+  const knownCompanies = new Set();
+  const add = (field, key, value, source) => {
+    const clean = normalizeFact(value);
+    if (!clean) return;
+    if (!collected.has(field)) collected.set(field, new Map());
+    const byKey = collected.get(field);
+    if (!byKey.has(key)) byKey.set(key, new Map());
+    const byValue = byKey.get(key);
+    if (!byValue.has(clean)) byValue.set(clean, { sources: new Set(), precedence: source.precedence });
+    const entry = byValue.get(clean);
+    entry.sources.add(source.label);
+    entry.precedence = Math.min(entry.precedence, source.precedence);
+  };
+
+  for (const source of sources) {
+    for (const [field, pattern] of CONTRADICTION_HANDLE_PATTERNS) {
+      pattern.lastIndex = 0;
+      for (const match of source.text.matchAll(pattern)) add(field, field, match[1], source);
+    }
+    CONTRADICTION_EMAIL_RE.lastIndex = 0;
+    for (const match of source.text.matchAll(CONTRADICTION_EMAIL_RE)) add('email', 'email', match[0], source);
+
+    for (const entry of sourceEducation(source.text).entries) {
+      if (entry.year) add('education-year', normalizeFact(entry.title), entry.year, source);
+    }
+    for (const job of sourceExperience(source.text)) {
+      if (job.company && job.title) {
+        add('job-title', normalizeFact(job.company), job.title, source);
+        knownCompanies.add(normalizeFact(job.company));
+      }
+    }
+    for (const line of source.text.split(/\r?\n/)) {
+      const header = headingText(normalizePandocLine(line), 3);
+      if (!header) continue;
+      const parts = header.split(/\s+[-–—]+\s+/).filter(Boolean);
+      if (parts.length >= 2) headingParts.push({ parts, source });
+    }
+  }
+  // Some cvs/* write `### Title — Company` instead of `### Company — Location`.
+  // Where the trailing part is a company we have already seen in a standard
+  // heading, read the leading part as the title for that company.
+  for (const { parts, source } of headingParts) {
+    if (knownCompanies.has(normalizeFact(parts[1]))) {
+      add('job-title', normalizeFact(parts[1]), parts[0], source);
+    }
+  }
+
+  const findings = [];
+  for (const [field, byKey] of collected) {
+    for (const [key, byValue] of byKey) {
+      if (byValue.size < 2) continue;
+      const values = [...byValue.entries()]
+        .sort((a, b) => a[1].precedence - b[1].precedence)
+        .map(([value, info]) => ({ value, sources: [...info.sources] }));
+      findings.push({ field, key, values, preferred: values[0].value });
+    }
+  }
+  return findings;
+}
+
+// ── P4: skills are checked too, but reported without blocking normal CVs ──
+// Skills were explicitly excluded: "rewording a skill into the posting's
+// vocabulary is the reformulation the tailoring is allowed to do." That is
+// true of a reworded skill, but it also let an INJECTED skill (from a JD that
+// tells the agent to add it) pass every gate. Compare each rendered skill item
+// with the sources and surface the unsupported ones as an explicit advisory.
+const SKILL_SYNONYMS = new Map([
+  ['k8s', 'kubernetes'], ['kubernetes', 'k8s'], ['js', 'javascript'], ['javascript', 'js'],
+  ['ts', 'typescript'], ['typescript', 'ts'], ['gcp', 'google cloud'], ['google cloud', 'gcp'],
+  ['aws', 'amazon web services'], ['llms', 'large language models'], ['llm', 'large language model'],
+  ['rag', 'retrieval augmented generation'], ['nlp', 'natural language processing'],
+  ['ml', 'machine learning'], ['ci/cd', 'continuous integration'], ['devops', 'dev ops'],
+]);
+const skillKey = value => normalizeFact(value).replace(/[^\p{L}\p{N}+#]/gu, '');
+const skillAlternatives = value => {
+  const key = skillKey(value);
+  const alt = SKILL_SYNONYMS.get(key);
+  return alt ? [key, skillKey(alt)] : [key];
+};
+
+/** Skill items the document renders, from structured markup and markdown lists. */
+function renderedSkillItems(text) {
+  const raw = latexBody(String(text ?? ''));
+  const items = [];
+  const openRe = /<(div|span)\b[^>]*\bclass="[^"]*\bskill-item\b[^"]*"[^>]*>/gi;
+  for (const el of findBalancedElements(raw, openRe)) {
+    let inner = raw.slice(el.contentStart, el.contentEnd);
+    inner = removeBalancedElements(inner, /<(span|div)\b[^>]*\bclass="[^"]*\bskill-category\b[^"]*"[^>]*>/gi);
+    items.push(...splitSkillItems(stripMarkup(inner)));
+  }
+  // Markdown/text CVs: a `## Skills` section. Each line holds a category and
+  // comma-separated items; the category prefix is dropped.
+  let inSkills = false;
+  for (const line of raw.split(/\r?\n/)) {
+    const heading = headingText(normalizePandocLine(line), 2);
+    if (heading !== null) { inSkills = /^(?:skills?|comp[eé]tences|habilidades|competenze|fertigkeiten)\b/i.test(heading); continue; }
+    if (!inSkills) continue;
+    items.push(...splitSkillItems(toPlainText(normalizePandocLine(line)).replace(/^[-*+]\s*/, '')));
+  }
+  return [...new Set(items)].filter(Boolean);
+}
+
+function splitSkillItems(text) {
+  return String(text ?? '')
+    .replace(/^[^\s:]{1,30}:\s*/, '') // category label ("Languages: ")
+    .split(/[,|;•·]|\band\b/gi)
+    .map(item => item.trim())
+    .filter(item => item.length >= 2 && item.length <= 60 && /\p{L}|\p{N}/u.test(item));
+}
+
+/**
+ * Unsupported skills: explicit findings, advisory by default so a legitimate
+ * rewording or a differently-phrased source skill does not hard-block a CV.
+ * Set `strict` to promote them to blocking findings for callers that opt in.
+ */
+export function skillFindings(targetText, sourceTexts, { strict = false, allowedFacts = new Set() } = {}) {
+  const declaresSkills = sourceTexts.some(text =>
+    /^#{1,6}\s+(?:skills?|comp[eé]tences|habilidades|competenze|fertigkeiten)\b/im.test(text)
+    || /\bclass=["'][^"']*skill-item/.test(text));
+  if (!declaresSkills) return [];
+  const lookup = skillKey(sourceTexts.map(text =>
+    collapseMarkdownLinks(stripMarkup(text, { keepLineBreaks: true }))).join('\n'));
+  const findings = [];
+  const seen = new Set();
+  for (const item of renderedSkillItems(targetText)) {
+    const key = skillKey(item);
+    if (!key || seen.has(key) || allowedFacts.has(normalizeFact(item))) continue;
+    if (skillAlternatives(item).some(alt => alt && lookup.includes(alt))) continue;
+    seen.add(key);
+    findings.push({ kind: 'skill', value: normalizeFact(item), line: item, blocking: strict });
+  }
+  return findings;
 }
 
 /** Split generated/source documents into bounded statements for attribution checks. */
@@ -2722,6 +3031,98 @@ export function metricClaims(text, { keepPlanHorizons = false } = {}) {
   return claims;
 }
 
+// ── F2: percentages carry the context of the thing they qualify ────────
+// A bare "90%" authorize every other "90%" in the document, whatever it
+// measured: "improved accuracy 90%" used to license "reduced churn 90%".
+// These helpers key a percentage by the number AND the content words around it
+// (including the action verb, so a legitimate rewording that keeps the verb
+// still matches), and are applied to markdown/text CVs as well as HTML.
+const PCT_CONTEXT_STOP = new Set([
+  'with', 'from', 'into', 'over', 'have', 'that', 'were', 'while', 'about', 'their', 'there',
+  'which', 'through', 'across', 'within', 'after', 'before', 'during', 'being', 'been', 'each',
+  'every', 'other', 'than', 'then', 'them', 'they', 'when', 'where', 'what', 'more', 'most',
+  'some', 'such', 'only', 'also', 'just', 'like', 'very', 'using', 'the', 'and', 'for', 'our',
+  'its', 'new', 'total', 'overall', 'year', 'years', 'percent', 'percentage', 'pct',
+  'was', 'is', 'are', 'be', 'did', 'does', 'do', 'has', 'had', 'it',
+]);
+
+/** Percentage claims paired with the content words that qualify them. */
+export function percentageClaimsWithContext(text) {
+  const clean = spellNumbers(stripMarkup(text, { keepLineBreaks: true }));
+  const out = [];
+  const pattern = SIMPLE_CLAIM_PATTERNS[0]; // the percentage pattern
+  for (const match of clean.matchAll(pattern)) {
+    const metric = canonicalMetric(match[0]);
+    const lineStart = clean.lastIndexOf('\n', match.index) + 1;
+    const nextNl = clean.indexOf('\n', match.index);
+    const line = clean.slice(lineStart, nextNl === -1 ? clean.length : nextNl);
+    const rel = match.index - lineStart;
+    const around = `${line.slice(Math.max(0, rel - 48), rel)} ${line.slice(match.index - lineStart + match[0].length, match.index - lineStart + match[0].length + 40)}`;
+    const words = [...new Set([...around.toLowerCase().matchAll(/\p{L}[\p{L}\p{M}\-+]{2,}/gu)]
+      .map(w => w[0])
+      .filter(w => !PCT_CONTEXT_STOP.has(w)))];
+    out.push({ metric, context: words.length ? words : null });
+  }
+  return out;
+}
+
+/** Two percentage contexts agree when they share at least one content word. */
+export function percentageContextsMatch(a, b) {
+  if (!a || !b) return false;
+  return a.some(word => b.includes(word));
+}
+
+/**
+ * Compare percentage claims with the contexts the sources attach to the same
+ * number. A clear context mismatch blocks; a genuinely undeterminable context
+ * is surfaced as an explicit advisory instead of silently passing.
+ */
+function percentageContextFindings(targetText, sourceTexts, explicitAllow = new Set()) {
+  const byMetric = new Map();
+  for (const claim of sourceTexts.flatMap(text => percentageClaimsWithContext(text))) {
+    if (!byMetric.has(claim.metric)) byMetric.set(claim.metric, []);
+    byMetric.get(claim.metric).push(claim);
+  }
+  const blocking = [], advisory = [];
+  const seenBlock = new Set(), seenAdvisory = new Set();
+  const add = (list, seen, claim) => {
+    if (seen.has(claim.value)) return;
+    seen.add(claim.value);
+    list.push(claim);
+  };
+  for (const claim of percentageClaimsWithContext(targetText)) {
+    if (explicitAllow.has(claim.metric)) continue;
+    const sources = byMetric.get(claim.metric) || [];
+    if (!sources.length) continue; // the bare-token gate already reports this
+    const known = sources.filter(source => source.context);
+    if (!claim.context) {
+      const distinct = new Set(known.map(source => source.context.join(' ')));
+      if (distinct.size > 1) {
+        add(advisory, seenAdvisory, {
+          kind: 'percentage-context-unverified',
+          value: `${claim.metric}: context could not be determined while sources give ${distinct.size} different ones`,
+        });
+      }
+      continue;
+    }
+    if (!known.length) {
+      add(advisory, seenAdvisory, {
+        kind: 'percentage-context-unverified',
+        value: `${claim.metric}: sources state this figure without a comparable metric`,
+      });
+      continue;
+    }
+    if (!known.some(source => percentageContextsMatch(claim.context, source.context))) {
+      add(blocking, seenBlock, {
+        kind: 'percentage-context',
+        value: `${claim.metric} qualifies ${claim.context.join(' ')} (no source attaches it to that figure)`,
+        metric: claim.metric,
+      });
+    }
+  }
+  return { blocking, advisory };
+}
+
 // A number counting a word, in ANY script — the language-agnostic SHAPE of the
 // claims COUNT_CLAIM_RE recognises only when the noun happens to be English.
 // Used solely to answer "were there count claims this gate could not read?",
@@ -3155,19 +3556,59 @@ export function collapseMarkdownLinks(text) {
   return out;
 }
 
+/**
+ * User-authored profile facts that are ground truth for candidate-facing text
+ * even though they are not in cv.md. F13: `cover_letter.notice_period_days` is
+ * stated in config/profile.yml and may be printed in a cover letter, but the
+ * profile was not a fact source, so a truthful "30-day notice period" blocked
+ * generation. Only values ACTUALLY present in the profile are returned — this
+ * never invents a number. The set is deliberately a small explicit allow-list;
+ * adding a field here is a conscious decision about what counts as a fact.
+ */
+function profileFactEvidence(profilePath, cwd) {
+  let raw = '';
+  try {
+    raw = readFileSync(resolveInputPath(profilePath, cwd), 'utf-8');
+  } catch {
+    return '';
+  }
+  const facts = [];
+  let inCoverLetter = false;
+  for (const line of raw.split(/\r?\n/)) {
+    const topLevel = line.match(/^([A-Za-z_][\w-]*)\s*:/);
+    if (topLevel) inCoverLetter = topLevel[1] === 'cover_letter';
+    if (!inCoverLetter) continue;
+    const notice = line.match(/^\s+notice_period_days\s*:\s*(\d+)\b/);
+    if (notice) {
+      facts.push(`${notice[1]}-day notice period`, `notice period of ${notice[1]} days`);
+    }
+  }
+  return facts.join('. ');
+}
+
 export function verifyFacts(targetText, {
   sourcePaths = DEFAULT_SOURCES,
   planTexts = [],
   configPath = DEFAULT_CONFIG,
+  profilePath = getProfilePath(),
   cwd = process.cwd(),
+  strictSkills = false,
 } = {}) {
   // Per file, before the join: stripMarkup keeps only the body of a LaTeX
   // document, and run on the joined text it would discard every source read
   // ahead of a .tex one as if it were that document's preamble.
   const sourceTexts = sourcePaths.map(path => latexBody(readIfExists(resolveInputPath(path, cwd))));
-  const sourceText = sourceTexts.join('\n');
+  // F6: report conflicts between the user's CVs instead of silently unioning
+  // them into one bag where either value can back a claim.
+  const contradictions = sourceContradictions(sourcePaths.map((path, i) => ({ path, text: sourceTexts[i] })));
+  const profileEvidence = profileFactEvidence(profilePath, cwd);
+  const sourceText = [sourceTexts.join('\n'), profileEvidence].filter(Boolean).join('\n');
   const { missing: configMissing, config } = loadFactConfig(resolveInputPath(configPath, cwd));
   const allowed = allowedMetricSet(sourceText, config.allow_metrics);
+  // F2: a number alone is not a fact — the metric it qualifies is. Waived
+  // figures (allow_metrics) are bypassed here just as in the bare-token gate.
+  const percentageFindings = percentageContextFindings(targetText, sourceTexts, allowedMetricSet('', config.allow_metrics));
+  const skills = skillFindings(targetText, sourceTexts, { strict: strictSkills, allowedFacts: new Set(config.allow_facts.map(normalizeFact)) });
   const targetClaims = metricClaims(targetText);
   const planned = plannedClaims(targetText, planTexts);
   const invented = [...targetClaims].filter(claim => !allowed.has(claim) && !planned.has(claim));
@@ -3180,12 +3621,21 @@ export function verifyFacts(targetText, {
   // name beside it ("fabrikam* (director)").
   // A reference definition takes a title only from the line right after it, never across a
   // blank line, so blank lines are kept while the links collapse.
-  const sourceLookup = normalizeFact(sourceTexts
-    .map(text => collapseMarkdownLinks(stripMarkup(text, { keepLineBreaks: true, keepBlankLines: true })))
-    .join('\n'));
+  const sourceLookup = normalizeFact([...sourceTexts.map(text =>
+    collapseMarkdownLinks(stripMarkup(text, { keepLineBreaks: true, keepBlankLines: true }))), profileEvidence]
+    .filter(Boolean).join('\n'));
   const allowedFacts = new Set(config.allow_facts.map(normalizeFact));
   const unsourced = ({ value }) => !sourceContainsFact(sourceLookup, value) && !allowedFacts.has(value);
-  const fieldClaims = structuredFieldClaims(targetText).filter(unsourced);
+  // F3: read \resumeProjectHeading names only where a source declares projects
+  // or awards. A synthetic fixture whose sources hold no such section must not
+  // be turned into a block by a project it never claimed to document.
+  const sourceDeclaresProjects = sourceTexts.some(text =>
+    /^#{1,6}\s+(?:projects?|projets?|proyectos?|projetos?|projekte|awards?|prix|premios?)\b/im.test(text)
+    || /\\resumeProjectHeading|class=["'][^"']*project-title/.test(text));
+  const fieldClaims = [
+    ...structuredFieldClaims(targetText),
+    ...(sourceDeclaresProjects ? latexProjectHeadingClaims(targetText) : []),
+  ].filter(unsourced);
   const associations = structuredAssociationClaims(targetText, sourceTexts, config);
   const namedFacts = [
     ...factClaims(targetText, sourceLookup),
@@ -3221,8 +3671,10 @@ export function verifyFacts(targetText, {
     ...fieldClaims.filter(claim => !claim.blocking).map(({ kind, value, line }) => ({ kind, value, line })),
     // A drift whose only new verb is ambiguous ("and automated reporting").
     ...driftFacts.filter(({ blocking }) => !blocking),
+    ...percentageFindings.advisory,
+    ...skills.filter(skill => !skill.blocking),
   ].filter(({ value }) => !allowedFacts.has(value));
-  const unsupportedFacts = [...namedFacts, ...comparedFacts]
+  const unsupportedFacts = [...namedFacts, ...comparedFacts, ...percentageFindings.blocking, ...skills.filter(skill => skill.blocking)]
     .filter((claim, index, claims) => claims.findIndex(other => other.kind === claim.kind && other.value === claim.value) === index);
   const forbidden = config.forbidden_phrases
       .filter(Boolean)
@@ -3230,6 +3682,16 @@ export function verifyFacts(targetText, {
   const warnings = config.warn_phrases
       .filter(Boolean)
       .filter(phrase => stripMarkup(targetText).toLowerCase().includes(String(phrase).toLowerCase()));
+  // F6: a contradiction is surfaced as a warning with provenance, never as a
+  // block and never resolved by silently choosing one of the conflicting CVs.
+  if (contradictions.length) {
+    // Avoid a literal "cvs/" + "*" here: the repo's crude --help scanner
+    // reads any slash-star in source as a block-comment opener and would blank
+    // out the real CLI flag checks that follow this file.
+    warnings.push(`Conflicting values across CV sources (precedence: article-digest.md → cv.md → additional CVs in cvs/): ${
+      contradictions.map(c => `${c.field} ${c.key}: ${c.values.map(v => `"${v.value}" (${v.sources.join(', ')})`).join(' vs ')}`).join('; ')
+    }`);
+  }
   // Never downgrades a block and never creates one: a document that fails on
   // real evidence still fails on that, and a coverage gap only turns a would-be
   // 'pass' into 'warn' so the caller is told the gate could not read it.
@@ -3251,6 +3713,7 @@ export function verifyFacts(targetText, {
     advisoryFacts,
     forbidden,
     warnings,
+    contradictions,
     coverage,
     // Deliberately outside the verdict: no config is a normal state, not a
     // finding. It rides along so a caller can say the phrase lists were never

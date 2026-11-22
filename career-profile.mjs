@@ -52,19 +52,49 @@ function evidenceKey(item) {
   return `${item?.evidence?.source ?? ''}\0${normalizeKey(item?.evidence?.quote ?? '')}`;
 }
 
+/** The exact bytes of an evidence record: its source wording, not just the display text. */
+function evidenceFingerprint(evidence) {
+  return [evidence?.source ?? '', evidence?.line ?? '', evidence?.quote ?? ''].join('\0');
+}
+
 function entityEvidenceKey(entry) {
   const facts = (entry.facts ?? []).map(evidenceKey).sort();
   return `${evidenceKey(entry)}\0${facts.join('\0')}`;
 }
 
+// Keyword groups, checked in this order. A heading qualifies when it contains
+// one of these words as a whole token; "&", "/", "-" and accented variants
+// are just separators/letters around it, so "AI & Machine Learning Experience"
+// and "Expérience professionnelle" both classify. "Academic" alone is NOT an
+// education keyword — "Academic & Personal Projects" is a projects heading.
+const HEADING_KEYWORDS = [
+  ['experiences', ['experience', 'exp[eé]rience', 'pengalaman', 'employment', 'work history']],
+  ['projects', ['projects?', 'projets?', 'proyek']],
+  ['education', ['education', 'formation', 'pendidikan', 'academic background']],
+  ['skills', ['skills?', 'comp[eé]tences?', 'keahlian', 'keterampilan', 'competencies']],
+  ['certifications', ['certifications?', 'certificates?', 'licen[cs]es?', 'sertifikasi', 'sertifikat', 'awards?']],
+  ['summary', ['summary', 'r[eé]sum[eé]', 'profil', 'ringkasan', 'about']],
+];
+
+function headingHasKeyword(text, patterns) {
+  return patterns.some((pattern) => new RegExp(`(^|[^\\p{L}\\p{N}])${pattern}(?:$|[^\\p{L}\\p{N}])`, 'u').test(text));
+}
+
 function classifyHeading(heading) {
-  const text = heading.toLowerCase();
+  const text = String(heading ?? '').normalize('NFKC').trim().toLocaleLowerCase('en-US');
+  // Exact canonical headings stay fast paths.
   if (/^(experience|work experience|employment|professional experience|pengalaman kerja|pengalaman)$/.test(text)) return 'experiences';
   if (/^(projects?|selected projects|portfolio|proyek|proyek pilihan)$/.test(text)) return 'projects';
-  if (/^(education|academic background|pendidikan)$/.test(text)) return 'education';
-  if (/^(skills?|technical skills|core competencies|keahlian|keterampilan)$/.test(text)) return 'skills';
+  if (/^(education|academic background|pendidikan|formation)$/.test(text)) return 'education';
+  if (/^(skills?|technical skills|core competencies|keahlian|keterampilan|comp[eé]tences?)$/.test(text)) return 'skills';
   if (/^(certifications?|certificates?|licenses?|sertifikasi|sertifikat)$/.test(text)) return 'certifications';
-  if (/^(summary|profile|about|professional summary|ringkasan|profil)$/.test(text)) return 'summary';
+  if (/^(summary|profile|about|professional summary|ringkasan|profil|r[eé]sum[eé] professionnel)$/.test(text)) return 'summary';
+  // Qualified headings from the repo's own additional CVs: "AI & Machine
+  // Learning Experience", "Academic & Personal Projects", "Résumé
+  // professionnel", "Compétences", "Formation", …
+  for (const [section, patterns] of HEADING_KEYWORDS) {
+    if (headingHasKeyword(text, patterns)) return section;
+  }
   return null;
 }
 
@@ -94,6 +124,10 @@ function parseCv(text, source) {
       const title = heading[2].trim();
       const found = classifyHeading(title);
       if (found) { section = found; entity = null; return; }
+      // An unrecognized top-level heading (##) ends the current section.
+      // Otherwise prose under e.g. "Activités & Langues" is silently
+      // absorbed into the preceding Skills section and becomes a skill fact.
+      if (heading[1].length <= 2) { section = null; entity = null; return; }
       if (section && ['experiences', 'projects', 'education'].includes(section)) {
         entity = { id: stableId(section, title, source), label: title,
           evidence: { source, line: lineNo, quote: raw.trim() }, facts: [] };
@@ -276,18 +310,42 @@ async function doImport(args) {
           const facts = new Map((old.facts ?? []).map((fact) => [fact.id, fact]));
           for (const fact of item.facts ?? []) {
             const existingFact = facts.get(fact.id);
+            // Re-import replaces evidence even when the display text is
+            // unchanged. A verified fact must not silently start pointing at
+            // source wording that was never approved: if the evidence bytes
+            // changed, drop the verification and require a fresh review.
             facts.set(fact.id, existingFact
-              ? { ...existingFact, ...(editedIds.has(fact.id) ? { text: fact.text } : {}), evidence: fact.evidence, review_status: fact.review_status }
+              ? {
+                ...existingFact,
+                ...(editedIds.has(fact.id) ? { text: fact.text } : {}),
+                evidence: fact.evidence,
+                review_status: evidenceFingerprint(existingFact.evidence) === evidenceFingerprint(fact.evidence)
+                  ? fact.review_status
+                  : 'needs_review',
+              }
               : fact);
           }
-          byId.set(item.id, { ...old, ...(editedIds.has(item.id) ? { label: item.label } : {}), evidence: item.evidence, review_status: item.review_status, facts: [...facts.values()] });
+          byId.set(item.id, {
+            ...old,
+            ...(editedIds.has(item.id) ? { label: item.label } : {}),
+            evidence: item.evidence,
+            review_status: evidenceFingerprint(old.evidence) === evidenceFingerprint(item.evidence)
+              ? item.review_status
+              : 'needs_review',
+            facts: [...facts.values()],
+          });
         }
-        else byId.set(item.id, {
-          ...byId.get(item.id),
-          ...(editedIds.has(item.id) ? { text: item.text } : {}),
-          evidence: item.evidence,
-          review_status: item.review_status,
-        });
+        else {
+          const old = byId.get(item.id);
+          byId.set(item.id, {
+            ...old,
+            ...(editedIds.has(item.id) ? { text: item.text } : {}),
+            evidence: item.evidence,
+            review_status: evidenceFingerprint(old.evidence) === evidenceFingerprint(item.evidence)
+              ? item.review_status
+              : 'needs_review',
+          });
+        }
       }
       merged[key] = [...byId.values()];
     }

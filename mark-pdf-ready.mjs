@@ -28,18 +28,29 @@
  * atomically. Only the PDF cell of the matched row changes; every other byte
  * of the tracker round-trips untouched.
  *
+ * A report-number match alone is not proof a PDF exists: generate-pdf.mjs
+ * deliberately leaves the output path untouched on a warning-only page-budget
+ * overflow. Before flipping a cell the script checks data/pdf-index.tsv with
+ * the SAME parsePdfIndex + livePdfIndex logic sync-pdf-flags.mjs uses, so the
+ * two writers cannot disagree about what "PDF ready" means. A missing,
+ * unreadable or stale manifest leaves the cell unchanged and fails closed.
+ *
  * Exit codes: 0 success (including no-op re-runs) · 1 usage error, no PDF
  * column, or non-retryable lock/write failure · 2 row not found, missing
  * tracker, or unreadable tracker · 3 ambiguous match (2+ rows link the same
- * report number) · 4 tracker lock timeout (busy — retry later).
+ * report number) · 4 tracker lock timeout (busy — retry later) · 5 no live
+ * indexed PDF for the report (nothing written).
  */
 
 import { readFileSync, existsSync } from 'fs';
 import { extractTrackerReportNumbers, resolveColumns, parseTrackerRow } from './tracker-parse.mjs';
 import {
-  rebuildRow, resolveTrackerPath, writeFileAtomic, CLI_EXIT, makeCliFailWith, makeCliFailUsage, acquireTrackerLockForCli,
+  rebuildRow, resolveTrackerPath, resolvePdfIndexPath, writeFileAtomic, CLI_EXIT, makeCliFailWith, makeCliFailUsage, acquireTrackerLockForCli,
 } from './tracker-utils.mjs';
 import { getCareerOpsRoot } from './path-resolver.mjs';
+// The exact check sync-pdf-flags.mjs makes before it sets a PDF cell: parse the
+// manifest, keep only rows whose PDF is still on disk, then join by report #.
+import { parsePdfIndex, livePdfIndex } from './find.mjs';
 
 // The USER's data root, not this file's directory — same defect, same fix as
 // set-status.mjs above it in this change.
@@ -48,6 +59,9 @@ const DATA_ROOT = getCareerOpsRoot();
 // LOCK_TIMEOUT is not destructured here — that exit path is raised inside
 // acquireTrackerLockForCli() itself (tracker-utils.mjs), via CLI_EXIT.LOCK_TIMEOUT.
 const { OK: EXIT_OK, USAGE: EXIT_USAGE, NOT_FOUND: EXIT_NOT_FOUND, AMBIGUOUS: EXIT_AMBIGUOUS } = CLI_EXIT;
+// Local to this CLI: CLI_EXIT is a shared closed set (0-4) other writers depend
+// on, so the new "no live PDF backs this report" failure gets its own code.
+const EXIT_PDF_NOT_READY = 5;
 
 const USAGE = `Usage: node mark-pdf-ready.mjs <report#> [--dry-run] [--json]
 
@@ -150,6 +164,34 @@ const alreadyReady = target.pdf.trim() === '✅';
 const changed = !alreadyReady;
 
 if (changed && !flags.dryRun) {
+  // A report-number match is not proof a PDF exists. generate-pdf.mjs leaves
+  // the output path untouched on a warning-only page-budget overflow, and
+  // never indexes that draft. Decide readiness exactly the way
+  // sync-pdf-flags.mjs does: parse the manifest, keep only rows whose PDF is
+  // still on disk (livePdfIndex also rejects paths escaping the workspace and
+  // cover-letter rows), then join by report number. A manifest that is absent
+  // or unreadable supplies no evidence, so the cell is left alone and the CLI
+  // fails closed instead of asserting a ✅ nothing backs.
+  const PDF_INDEX = resolvePdfIndexPath(APPS_FILE);
+  const manifestReports = new Set();
+  if (existsSync(PDF_INDEX)) {
+    let manifestContent;
+    try {
+      manifestContent = readFileSync(PDF_INDEX, 'utf-8');
+    } catch (err) {
+      failWith(EXIT_PDF_NOT_READY, 'pdf-index-unreadable',
+        `Cannot read PDF manifest at ${PDF_INDEX}: ${err.message} — leaving the PDF cell unchanged`);
+    }
+    const live = livePdfIndex(parsePdfIndex(manifestContent), DATA_ROOT, (message) => console.warn(`⚠️  ${message}`));
+    for (const report of live.keys()) {
+      if (/^\d+$/.test(report) && Number(report) > 0) manifestReports.add(Number(report));
+    }
+  }
+  if (!manifestReports.has(targetReportNum)) {
+    failWith(EXIT_PDF_NOT_READY, 'pdf-not-ready',
+      `No live PDF is indexed for report #${targetReportNum} in ${PDF_INDEX} — leaving the PDF cell unchanged`);
+  }
+
   const parts = lines[target.lineIdx].split('|').map(s => s.trim());
   while (parts.length <= colmap.pdf) parts.push('');
   parts[colmap.pdf] = '✅';

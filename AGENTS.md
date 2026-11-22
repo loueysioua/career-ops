@@ -56,7 +56,7 @@ Everything else is **out of scope for content generation**: auto-memory (see bel
 
 **Rule from the original design:** *"Keywords get reformulated, never fabricated."* Reorder, reframe, emphasise — but never invent. If a claim isn't backed by an in-scope file, ask the user; if they don't add it, the output goes without it. Silence on a topic is fine; manufactured detail is not.
 
-**Authorship claims are non-negotiable.** Never claim the user authored a project, repo, library, tool, framework, or open-source artefact unless explicitly attributed to them in `cv.md` or `article-digest.md`. Tool-of-trade conflation (the user uses X → the user built X) is the most common fabrication pattern and is explicitly forbidden.
+**Authorship claims are non-negotiable.** Claim that the user authored a project, repo, library, tool, framework, or open-source artefact only when it is attributed to them in a user-layer primary source — `cv.md`, `cvs/*`, or `article-digest.md` — or in the user's explicit statement in the current conversation. A project that appears in any `cvs/*` is still the user's claim and may be used (see the Multiple CVs rule above); a tool the user simply uses is never evidence of authorship. Tool-of-trade conflation (the user uses X → the user built X) is the most common fabrication pattern and is explicitly forbidden: never invent an attribution to get past a gate, and if no primary source backs it, omit the claim or ask the user.
 
 ### Auto-memory scope (clarification, not exception)
 

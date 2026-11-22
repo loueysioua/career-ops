@@ -27,8 +27,10 @@ import { existsSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { isMainModule } from './lib/is-main-module.mjs';
 import { validateFlags } from './lib/cli-flags.mjs';
-import { getCareerOpsRoot } from './path-resolver.mjs';
+import { getCareerOpsRoot, getProfilePath } from './path-resolver.mjs';
 import { resolveCvSources } from './lib/cv-sources.mjs';
+import { validateLatexLockedSections, latexSectionKey } from './lib/latex-content.mjs';
+import { readLockedSections } from './theme-style.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 
@@ -307,39 +309,77 @@ export async function compileLatexFile(absPath, content, outputPath, compileOnly
  *   latex-tex mode, which is user-authored and may hold facts cv.md lacks.
  * @returns {Promise<{verdict: 'pass'|'warn'|'block'|'skipped', reason?: string, result?: object}>}
  */
-export async function runLatexFactGate(content, { root = getCareerOpsRoot(), extraSources = [], label } = {}) {
+/** True when a --source resolves to the document being compiled or to output/. */
+function isGeneratedArtifact(path, root, inputPath) {
+  const normalized = resolve(path).replace(/\\/g, '/');
+  if (inputPath && normalized === resolve(inputPath).replace(/\\/g, '/')) return true;
+  const rootNorm = resolve(root).replace(/\\/g, '/');
+  const relative = normalized.startsWith(`${rootNorm}/`) ? normalized.slice(rootNorm.length + 1) : normalized;
+  return relative.split('/').includes('output');
+}
+
+export async function runLatexFactGate(content, { root = getCareerOpsRoot(), extraSources = [], label, inputPath } = {}) {
   // Every CV the user has, not just the baseline one: a claim the baseline
   // omits but an additional CV holds is still the user's claim (lib/cv-sources.mjs).
   const sources = resolveCvSources(root);
   if (!sources.all.length) return { verdict: 'skipped', reason: `no cv.md in ${root}` };
-  // Imported lazily, as generate-pdf.mjs does: a test that copies this script
-  // alone into a temp workspace has no cv.md and never reaches the import.
-  const { assertFacts, stripMarkup } = await import('./verify-cv-facts.mjs');
-  const { voiceIssues, voiceTellMessage, voiceDashWarning, candidateOwnWords } = await import('./cv-voice.mjs');
-  // An explicit --source that does not exist is a mistyped path, not an empty
-  // source. Read as empty, it would leave the claims it was passed to back
-  // unsupported and blame the CV instead of the path.
-  const extraPaths = extraSources.map(p => resolve(p));
-  const missing = extraPaths.filter(p => !existsSync(p));
-  if (missing.length) return { verdict: 'block', reason: `--source file not found: ${missing.join(', ')}` };
-  const cvPaths = sources.all.map(entry => entry.path);
-  const sourcePaths = [...cvPaths, join(root, 'article-digest.md'), ...extraPaths];
-  // The voice check allows wording the candidate wrote: cv.md, any --source
-  // file, voice-dna.md, and the cv-facts allow lists. article-digest.md
-  // backs facts, not phrasing.
-  // Strip each file on its own. Joined first, one \begin{document} in a
-  // --source .tex file drops the cv.md lines that came before it.
-  let voiceSource = '';
-  for (const sourcePath of [...cvPaths, ...extraPaths]) {
-    const source = await readFile(sourcePath, 'utf-8');
-    voiceSource += `\n${stripMarkup(source, { keepLineBreaks: true })}`;
-  }
-  voiceSource += `\n${candidateOwnWords(root)}`;
-  const voiceIssuesFound = voiceIssues(content, voiceSource);
-  const voiceError = voiceTellMessage(voiceIssuesFound, label);
-  if (voiceError) return { verdict: 'block', reason: voiceError };
-  const voiceWarning = voiceDashWarning(voiceIssuesFound, label);
+  // F8/F9: ALL source validation and every file read live inside one try, so a
+  // directory, an unreadable file or a self-referential --source returns the
+  // documented block verdict instead of throwing an EISDIR stack trace.
   try {
+    const extraPaths = extraSources.map(p => resolve(p));
+    const selfReferential = extraPaths.filter(p => isGeneratedArtifact(p, root, inputPath));
+    if (selfReferential.length) {
+      return { verdict: 'block', reason: `--source may not point at the generated document or any output/ artifact (it would make every claim self-supporting): ${selfReferential.join(', ')}` };
+    }
+    const unreadable = [];
+    for (const path of extraPaths) {
+      try {
+        const statResult = await stat(path);
+        if (!statResult.isFile()) { unreadable.push(`${path} (not a regular file)`); continue; }
+        await readFile(path, 'utf-8'); // readability probe
+      } catch (err) {
+        unreadable.push(`${path} (${err.message})`);
+      }
+    }
+    if (unreadable.length) {
+      return { verdict: 'block', reason: `--source file not found, unreadable or not a file: ${unreadable.join(', ')}` };
+    }
+
+    const cvPaths = sources.all.map(entry => entry.path);
+    for (const path of cvPaths) {
+      const statResult = await stat(path);
+      if (!statResult.isFile()) throw new Error(`CV source is not a regular file: ${path}`);
+    }
+    const sourcePaths = [...cvPaths, join(root, 'article-digest.md'), ...extraPaths];
+
+    // P13: a locked section may not be reordered or paraphrased on the way to
+    // the compiler. Validate the document BEFORE any PDF is written.
+    const lockedKeys = readLockedSections(getProfilePath(root), latexSectionKey);
+    if (lockedKeys.length) {
+      const baseline = sources.all.find(entry => /cv\.md$/i.test(entry.path))?.path ?? cvPaths[0];
+      validateLatexLockedSections(content, await readFile(baseline, 'utf-8'), lockedKeys);
+    }
+
+    // Imported lazily, as generate-pdf.mjs does: a test that copies this script
+    // alone into a temp workspace has no cv.md and never reaches the import.
+    const { assertFacts, stripMarkup } = await import('./verify-cv-facts.mjs');
+    const { voiceIssues, voiceTellMessage, voiceDashWarning, candidateOwnWords } = await import('./cv-voice.mjs');
+    // The voice check allows wording the candidate wrote: cv.md, any --source
+    // file, voice-dna.md, and the cv-facts allow lists. article-digest.md
+    // backs facts, not phrasing.
+    // Strip each file on its own. Joined first, one \begin{document} in a
+    // --source .tex file drops the cv.md lines that came before it.
+    let voiceSource = '';
+    for (const sourcePath of [...cvPaths, ...extraPaths]) {
+      const source = await readFile(sourcePath, 'utf-8');
+      voiceSource += `\n${stripMarkup(source, { keepLineBreaks: true })}`;
+    }
+    voiceSource += `\n${candidateOwnWords(root)}`;
+    const voiceIssuesFound = voiceIssues(content, voiceSource);
+    const voiceError = voiceTellMessage(voiceIssuesFound, label);
+    if (voiceError) return { verdict: 'block', reason: voiceError };
+    const voiceWarning = voiceDashWarning(voiceIssuesFound, label);
     const result = assertFacts(content, { sourcePaths, configPath: join(root, 'config', 'cv-facts.json'), label });
     if (result.verdict === 'block' || !voiceWarning) return { verdict: result.verdict, result };
     return { verdict: 'warn', result, reason: voiceWarning, voiceWarning };
@@ -350,24 +390,43 @@ export async function runLatexFactGate(content, { root = getCareerOpsRoot(), ext
 
 // ── CLI flags + help ──────────────────────────────────────
 
-const KNOWN_FLAGS = ['--compile-only', '--skip-fact-check', '--source', '--help', '-h'];
+const KNOWN_FLAGS = ['--compile-only', '--skip-fact-check', '--strict-fact-check', '--source', '--help', '-h'];
 const VALUE_FLAGS = ['--source'];
+
+// P12: --skip-fact-check removes the entire safety net. Mirror generate-pdf's
+// discipline: warn loudly, offer --strict-fact-check to make warnings fatal,
+// and refuse to skip in an unattended run where no human reads the warning.
+const HEADLESS_ENV_FLAGS = ['CI', 'CAREER_OPS_HEADLESS', 'CAREER_OPS_UNATTENDED', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'BUILD_NUMBER'];
+export function isHeadlessFactGate(env = process.env, streams = { stdin: process.stdin, stdout: process.stdout }) {
+  const flagged = HEADLESS_ENV_FLAGS.some(key => {
+    const value = env[key];
+    return value !== undefined && value !== '' && !/^(?:0|false|no)$/i.test(String(value));
+  });
+  return flagged || (!streams.stdin?.isTTY && !streams.stdout?.isTTY);
+}
+
+export function warnFactGateNotRunLatex(print = console.error) {
+  print('⚠️  CV FACT CHECK SKIPPED (--skip-fact-check): the LaTeX document has NOT been checked against your sources. An invented employer, degree, award, project or metric can reach the PDF. Only use this for a draft you will verify by hand.');
+}
 
 const USAGE = `Usage:
   node generate-latex.mjs <input.tex> [output.pdf]                 # fact-check, validate career-ops template structure, then compile
   node generate-latex.mjs <input.tex> [output.pdf] --compile-only  # skip template validation; compile any user-owned .tex (latex-tex mode)
   node generate-latex.mjs <input.tex> [output.pdf] --source <path> # add a fact-gate source (repeatable), e.g. the user's own .tex
+  node generate-latex.mjs <input.tex> [output.pdf] --strict-fact-check  # make a 'warn' verdict fatal
   node generate-latex.mjs <input.tex> [output.pdf] --skip-fact-check
   node generate-latex.mjs --help|-h                                # print this usage block and exit
 
 The fact gate runs when the data root has a cv.md; a blocked document is not compiled.
+--skip-fact-check is refused in CI/headless runs, warns loudly otherwise, and cannot
+  be combined with --strict-fact-check.
 Requires a repo-local tectonic (${INSTALL_HINT}) or tectonic/pdflatex on PATH.`;
 
 /**
  * Split argv into positionals, --source values and boolean flags.
  *
  * @param {string[]} rawArgs
- * @returns {{positionals: string[], sources: string[], compileOnly: boolean, skipFactCheck: boolean}}
+ * @returns {{positionals: string[], sources: string[], compileOnly: boolean, skipFactCheck: boolean, strictFactCheck: boolean}}
  */
 export function parseLatexArgs(rawArgs) {
   const positionals = [];
@@ -378,7 +437,7 @@ export function parseLatexArgs(rawArgs) {
       if (rawArgs[i + 1] !== undefined) sources.push(rawArgs[++i]);
     } else if (arg.startsWith('--source=')) {
       sources.push(arg.slice('--source='.length));
-    } else if (arg !== '--compile-only' && arg !== '--skip-fact-check') {
+    } else if (arg !== '--compile-only' && arg !== '--skip-fact-check' && arg !== '--strict-fact-check') {
       positionals.push(arg);
     }
   }
@@ -387,6 +446,7 @@ export function parseLatexArgs(rawArgs) {
     sources,
     compileOnly: rawArgs.includes('--compile-only'),
     skipFactCheck: rawArgs.includes('--skip-fact-check'),
+    strictFactCheck: rawArgs.includes('--strict-fact-check'),
   };
 }
 
@@ -402,7 +462,7 @@ async function main() {
   // This is the defect lib/cli-flags.mjs was written for; see its header.
   validateFlags(rawArgs, KNOWN_FLAGS, USAGE, { valueFlags: VALUE_FLAGS, requireOperand: true });
 
-  const { positionals, sources, compileOnly, skipFactCheck } = parseLatexArgs(rawArgs);
+  const { positionals, sources, compileOnly, skipFactCheck, strictFactCheck } = parseLatexArgs(rawArgs);
   const inputPath = positionals[0];
   const outputPath = positionals[1];
 
@@ -410,6 +470,15 @@ async function main() {
     console.error(USAGE);
     process.exit(1);
   }
+  if (skipFactCheck && strictFactCheck) {
+    console.error('--strict-fact-check cannot be combined with --skip-fact-check: one runs the fact gate, the other skips it.');
+    process.exit(1);
+  }
+  if (skipFactCheck && isHeadlessFactGate()) {
+    console.error('Refusing --skip-fact-check in an unattended/CI/headless context: the fact gate is the only safety net for a sendable CV. Remove the flag (or run interactively) to compile.');
+    process.exit(1);
+  }
+  if (skipFactCheck) warnFactGateNotRunLatex();
 
   const absPath = resolve(inputPath);
   let content;
@@ -422,7 +491,7 @@ async function main() {
 
   const factCheck = skipFactCheck
     ? { verdict: 'skipped', reason: '--skip-fact-check' }
-    : await runLatexFactGate(content, { extraSources: sources, label: basename(absPath) });
+    : await runLatexFactGate(content, { extraSources: sources, label: basename(absPath), inputPath: absPath });
   if (factCheck.verdict === 'block') {
     // Nothing is compiled. A fact gate that let the PDF through and reported
     // afterwards would leave the sendable artifact on disk.
@@ -446,6 +515,10 @@ async function main() {
     const { printFactWarnings } = await import('./verify-cv-facts.mjs');
     console.error(`⚠️  CV fact check warning: ${basename(absPath)}`);
     printFactWarnings(factCheck.result, console.error);
+  }
+  if (strictFactCheck && factCheck.verdict === 'warn') {
+    console.error(`Fact check failed for ${basename(absPath)} (--strict-fact-check: a warning is fatal).`);
+    process.exit(1);
   }
 
   const report = await compileLatexFile(absPath, content, outputPath || null, compileOnly);

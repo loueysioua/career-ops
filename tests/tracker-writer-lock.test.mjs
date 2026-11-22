@@ -131,6 +131,20 @@ async function runWhileLocked({
   const db = join(dir, 'applications.db');
   writeFileSync(tracker, content);
 
+  // mark-pdf-ready.mjs now sets ✅ only when the PDF is indexed in the
+  // manifest and still on disk (F10). Seed a live artifact so this lock test
+  // still reaches the locked write instead of failing at the readiness gate.
+  if (name === 'mark-pdf-ready') {
+    mkdirSync(join(dir, 'data'), { recursive: true });
+    mkdirSync(join(dir, 'output'), { recursive: true });
+    writeFileSync(join(dir, 'output', 'cv-001-acme.pdf'), '%PDF-1.4 fixture');
+    writeFileSync(join(dir, 'data', 'pdf-index.tsv'), [
+      '# report\tpdf\thtml\tformat\tdate\tkind',
+      ['1', 'output/cv-001-acme.pdf', 'output/cv-001-acme.html', 'A4', '2026-01-01', 'cv'].join('\t'),
+      '',
+    ].join('\n'));
+  }
+
   if (name.startsWith('reply-watch')) {
     const candidatesFile = join(dir, 'candidates.json');
     writeFileSync(candidatesFile, JSON.stringify(candidates || [{

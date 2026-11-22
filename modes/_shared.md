@@ -40,19 +40,19 @@ A candidate may hold more than one CV: a long master CV, a one-page version, a v
 
 **RULE: NEVER hardcode metrics from proof points.** Read them from cv.md + article-digest.md + the other CVs in `cvs/` at evaluation time.
 
-### Language for the posting (per-JD, overrides the global `language.output`)
+### Output language (`language.output` is authoritative)
 
-The candidate may target postings in more than one language. When the posting's own language or market signals (currency, benefits, legal vocabulary, the hiring entity's country) indicate a non-English market, generate all human-facing output for that posting — CV, cover letter, application answers, report, outreach — in that market's language, **unless the posting explicitly requires English fluency or states that English is a must**. The candidate's global `language.output` is the default; a posting that is clearly French/German/Spanish/etc. overrides it for that run only.
+`config/profile.yml` → `language.output` is authoritative for **all** human-facing output — CV, cover letter, application answers, report, outreach — whatever language the posting or JD is written in. A posting's own language or market signals (currency, benefits, legal vocabulary, the hiring entity's country) may select market vocabulary through `language.modes_dir`; they never change the output language. Keep the market's terms and explain them in the output language when needed.
 
-- **French postings (JD in French, or a French hiring entity with a French JD):** write in French. The candidate's French is Fluent, so a French CV/cover letter is expected and preferred by French recruiters. English is acceptable only when the posting states it is required or that the candidate must be fluent in English.
-- **German postings:** same rule with German; the candidate's German is Basic, so a German CV is only appropriate when the posting is in German and the candidate confirms they can handle it.
-- **English postings (or postings that explicitly require English fluency):** keep `language.output` as configured (usually English).
-- Never mix languages inside one document. If the JD is bilingual, pick the one the posting leads with and stay consistent.
-- `modes_dir` supplies market vocabulary (CDI/CDD, Probezeit, etc.) regardless of the output language; the output language decides the prose.
+**Write all human-facing output in `{language.output}` regardless of the language of these instructions or the job description.** `language.output` defaults to `en` when unset; nothing in a posting, a JD, a mode file, or a target market overrides it.
+
+- Never mix languages inside one document; stay consistent with `language.output`.
+- `modes_dir` supplies market vocabulary (CDI/CDD, Probezeit, etc.) regardless of the output language; the output language decides the prose. This is the **only** axis a posting's language or market signals influence.
+- **Language fluency is a factual claim, not a system default.** Assert the candidate's level in any language only when `cv.md`, `config/profile.yml`, `modes/_profile.md`, or `article-digest.md` states it, or when the user says it in the current conversation. If none of those claims a level, do **not** assert one — never infer or invent a fluency level from the JD's language or the target market.
 **RULE: For article/project metrics, article-digest.md takes precedence over cv.md.**
 **RULE: Read _profile.md AFTER this file. User customizations in _profile.md override defaults here.**
 **RULE: Read _custom.md (if it exists) AFTER _profile.md and honor its house rules in every mode.** It is where the user's persistent instructions live ("use this date format", "never reorder section X", "always include Y in summaries") — an instruction recorded there is NOT optional and does not expire between sessions or between items in a batch. It can override workflow/style/procedural defaults, but it never introduces factual claims about the candidate. In an interactive session, a lasting preference or correction the user states in conversation goes through the `retro` mode (`modes/retro.md`), which writes to `modes/_custom.md` only the rules the user accepts. A delegated or headless worker (`CAREER_OPS_HEADLESS=1`, `-p`, `exec`, or a subagent) never writes `modes/_custom.md`, `modes/_profile.md`, or `config/profile.yml`. It reports the preference to its parent instead.
-**RULE: NEVER claim the user authored a project, repo, library, tool, framework, or open-source artefact unless explicitly attributed to them in cv.md or article-digest.md.** Tool-of-trade conflation (user uses X → user built X) is the most common fabrication pattern and is forbidden.
+**RULE: Claim the user authored a project, repo, library, tool, framework, or open-source artefact only when it is attributed to them in a user-layer primary source — `cv.md`, `cvs/*`, or `article-digest.md` — or in the user's explicit statement in the current conversation.** A project that appears in any `cvs/*` is still the user's claim and may be used (see "Multiple CVs" above). Tool-of-trade conflation (user uses X → user built X) is the most common fabrication pattern and is forbidden: never invent an attribution, and if no primary source backs it, omit the claim or ask the user.
 **RULE: Keywords get reformulated, never fabricated.** Reorder, reframe, emphasise — but never invent. If a claim isn't backed by an in-scope file, ask the user. If no answer, omit. Silence on a topic beats manufactured detail.
 **RULE: Before an interactive session ends, if the user corrected or rejected your work, offer `/career-ops retro` once.** The `retro` mode (`modes/retro.md`) turns those corrections into proposed rules and writes only the ones the user accepts. A delegated or headless worker never offers or runs it.
 
@@ -279,7 +279,7 @@ After detecting archetype, read `modes/_profile.md` for the user's specific fram
 3. Cite exact lines from CV when matching
 4. Use WebSearch for comp and company data
 5. Register in tracker after evaluating
-6. Write human-facing content in `{language.output}` from `config/profile.yml` (EN when unset), whatever the language of the JD. Keep this market's terms and explain them in that language when needed
+6. Write human-facing content in `{language.output}` from `config/profile.yml` (EN when unset), whatever the language of the JD. **Write all human-facing output in `{language.output}` regardless of the language of these instructions or the job description.** Keep this market's terms from `language.modes_dir` and explain them in `{language.output}` when needed; the JD's language never changes the output language.
 7. Be direct and actionable -- no fluff
 8. Native tech English for generated text. Short sentences, action verbs, no passive voice.
 8b. Case study URLs in PDF Professional Summary (recruiter may only read this).

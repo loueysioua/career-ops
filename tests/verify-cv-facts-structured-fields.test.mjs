@@ -15,7 +15,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -48,11 +48,20 @@ const source = join(tmp, 'cv.md');
 writeFileSync(source, CV);
 const options = (extra = {}) => ({ sourcePaths: [source], configPath: join(tmp, 'none.json'), ...extra });
 
+// The LaTeX builder runs its source-backed fact gate when it finds a cv.md in
+// the resolved data root. Fixtures here are synthetic (Acme Corp, BS CS, …),
+// so give the builders an empty data root — the gate skips and the builder's
+// structured-field projection is what these tests exercise. verifyFacts() is
+// called separately with an explicit sourcePaths below.
+const buildRoot = join(tmp, 'build-root');
+mkdirSync(buildRoot, { recursive: true });
+const buildEnv = { ...process.env, CAREER_OPS_ROOT: buildRoot, CAREER_OPS_DATA_DIR: '', CAREER_OPS_PROFILE: '' };
+
 function build(script, payload, ext) {
   const input = join(tmp, `${script}-${Math.random().toString(36).slice(2)}.json`);
   const output = `${input}.${ext}`;
   writeFileSync(input, JSON.stringify(payload));
-  const run = spawnSync(process.execPath, [join(ROOT, script), input, output], { encoding: 'utf-8' });
+  const run = spawnSync(process.execPath, [join(ROOT, script), input, output], { encoding: 'utf-8', env: buildEnv });
   assert.equal(run.status, 0, describeSpawn(run, `${script} failed`));
   return readFileSync(output, 'utf-8');
 }
